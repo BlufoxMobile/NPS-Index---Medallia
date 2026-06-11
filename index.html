@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blufox NPS Report</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%); min-height:100vh; color:#e2e8f0; padding:24px 16px 60px; }
+  .wrap { max-width:980px; margin:0 auto; }
+  header h1 { font-size:26px; font-weight:700; color:#f8fafc; }
+  header p { color:#94a3b8; font-size:13px; margin-top:4px; }
+  .tabs { display:flex; gap:8px; margin:22px 0 18px; border-bottom:1px solid #334155; }
+  .tab { background:none; border:none; color:#94a3b8; font-family:inherit; font-size:14px; font-weight:600; padding:10px 18px; cursor:pointer; border-bottom:3px solid transparent; }
+  .tab.active { color:#f8fafc; border-bottom-color:#3b82f6; }
+  .controls { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; align-items:center; }
+  select, .chip { background:#1e293b; border:1px solid #334155; color:#e2e8f0; border-radius:8px; padding:8px 12px; font-family:inherit; font-size:13px; cursor:pointer; }
+  .chip { border-radius:999px; font-weight:600; }
+  .chip.on-good { background:rgba(16,185,129,.15); border-color:#10b981; color:#6ee7b7; }
+  .chip.on-ok   { background:rgba(245,158,11,.15); border-color:#f59e0b; color:#fcd34d; }
+  .chip.on-bad  { background:rgba(239,68,68,.15);  border-color:#ef4444; color:#fca5a5; }
+  .summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin-bottom:22px; }
+  .sumcard { background:#1e293b; border:1px solid #334155; border-radius:12px; padding:14px 16px; }
+  .sumcard .lbl { font-size:10px; letter-spacing:1px; text-transform:uppercase; color:#64748b; font-weight:600; }
+  .sumcard .val { font-size:24px; font-weight:700; margin-top:4px; color:#f8fafc; }
+  .sumcard.good .val { color:#34d399; } .sumcard.ok .val { color:#fbbf24; } .sumcard.bad .val { color:#f87171; }
+  .storeblock { margin-bottom:26px; }
+  .storehead { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px; padding:10px 14px; background:#1e3a8a; border-radius:10px 10px 0 0; }
+  .storehead h2 { font-size:17px; color:#fff; }
+  .storehead .sub { font-size:12px; color:#cbd5e1; }
+  .storehead .counts { margin-left:auto; font-size:12px; font-weight:700; }
+  .storebody { background:#1e293b; border:1px solid #334155; border-top:none; border-radius:0 0 10px 10px; padding:12px; }
+  .survey { display:flex; gap:12px; border-radius:10px; padding:12px 14px; margin-bottom:10px; border:1px solid; }
+  .survey:last-child { margin-bottom:0; }
+  .survey.good { background:rgba(16,185,129,.08); border-color:rgba(16,185,129,.45); }
+  .survey.ok   { background:rgba(245,158,11,.08); border-color:rgba(245,158,11,.45); }
+  .survey.bad  { background:rgba(239,68,68,.10);  border-color:#ef4444; border-width:2px; }
+  .score { flex:0 0 40px; height:40px; border-radius:50%; color:#fff; font-weight:700; font-size:16px; display:flex; align-items:center; justify-content:center; }
+  .good .score { background:#10b981; } .ok .score { background:#f59e0b; } .bad .score { background:#ef4444; }
+  .meta { font-size:12px; color:#94a3b8; font-weight:600; }
+  .comment { font-size:14px; color:#f1f5f9; margin-top:5px; line-height:1.5; }
+  .comment.none { color:#64748b; font-style:italic; }
+  .empty { text-align:center; color:#64748b; padding:50px 0; font-size:14px; }
+  .toolbar { display:flex; gap:10px; margin-bottom:18px; flex-wrap:wrap; }
+  .btn { background:linear-gradient(135deg,#3b82f6,#2563eb); color:#fff; border:none; border-radius:8px; padding:10px 18px; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer; }
+  .btn:disabled { opacity:.4; cursor:not-allowed; }
+  .btn.secondary { background:#334155; }
+  .note { font-size:12px; color:#94a3b8; }
+  .banner { padding:12px 16px; border-radius:10px; font-size:13px; margin-bottom:16px; display:none; line-height:1.5; }
+  .banner.info { display:block; background:rgba(59,130,246,.1); border:1px solid #3b82f6; color:#93c5fd; }
+  .banner.success { display:block; background:rgba(34,197,94,.1); border:1px solid #22c55e; color:#86efac; }
+  .banner.error { display:block; background:rgba(239,68,68,.1); border:1px solid #ef4444; color:#fca5a5; }
+  .src { text-align:center; color:#475569; font-size:11px; margin-top:26px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Blufox NPS Report</h1>
+    <p id="updatedAt">Loading survey data&hellip;</p>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" id="tabYesterday" onclick="setTab('yesterday')">Yesterday's NPS</button>
+    <button class="tab" id="tabMtd" onclick="setTab('mtd')">MTD NPS</button>
+  </div>
+
+  <div class="controls">
+    <select id="storeFilter" onchange="render()"><option value="">All Stores</option></select>
+    <select id="dmFilter" onchange="render()"><option value="">All DMs</option></select>
+    <button class="chip on-good" id="chipGood" onclick="toggleBand('good')">Good 9&ndash;10</button>
+    <button class="chip on-ok" id="chipOk" onclick="toggleBand('ok')">OK 8</button>
+    <button class="chip on-bad" id="chipBad" onclick="toggleBand('bad')">Needs Attention 0&ndash;7</button>
+  </div>
+
+  <div class="summary" id="summary"></div>
+
+  <div class="toolbar" id="toolbar" style="display:none;">
+    <button class="btn" id="resendBtn" onclick="resendEmails()">Resend Yesterday's Emails</button>
+    <span class="note" style="align-self:center;">Re-fires the Zapier webhook for every store in the last upload batch.</span>
+  </div>
+
+  <div class="banner" id="banner"></div>
+  <div id="results"><div class="empty">Loading&hellip;</div></div>
+  <div class="src" id="src"></div>
+</div>
+
+<script>
+// === NPS SHARED MODULE (identical copy lives in upload.html + NPS-Report/index.html) ===
+const NPS_CONFIG = {
+  // Paste your Zapier "Catch Hook" URL here (Webhooks by Zapier trigger).
+  WEBHOOK_URL: "PASTE_YOUR_ZAPIER_CATCH_HOOK_URL_HERE",
+  RESPONSES_PATH: "data/nps-responses.json",
+  SENT_LOG_PATH:  "data/nps-sent-log.json",
+  RESPONSES_URL: "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/nps-responses.json",
+  SENT_LOG_URL:  "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/nps-sent-log.json",
+  DIRECTORY_URL: "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/store-directory.json",
+  NPS_SALES_REPORT_URL: "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/Sales%20Report.xlsx",
+  DASHBOARD_URL: "https://blufoxmobile.github.io/NPS-Report/",
+  RSD_FILTER: "Bilbrey",
+  MY_EMAIL: "jbilbrey@blufoxmobile.com",
+  HISTORY_DAYS: 95
+};
+
+// Store-number → short store name (numbers observed in the tNPS "Store ID" column BE).
+const NPS_STORE_NUM = {
+  "55027": "Bourbonnais",   "55009": "Uptown",          "55005": "Frankfort",
+  "51026": "Schererville",  "55004": "Glenview",        "51011": "Greeneville",
+  "51025": "South Skokie",  "55006": "Elkhart",         "55010": "Evergreen Park",
+  "55000": "Valparaiso",    "51022": "South Knoxville", "51023": "Round Lake Beach",
+  "51031": "Johnson City",  "55002": "Tinley Park",     "55011": "Cicero",
+  "55001": "Kildeer",       "55003": "Dekalb",          "55008": "Evanston",
+  "51009": "Oak Ridge"
+};
+
+// Keyword fallbacks for store numbers we haven't seen yet. Checked in order.
+const NPS_STORE_ALIASES = [
+  ["South Knoxville", ["s. knoxville", "s knoxville", "south knoxville"]],
+  ["South Skokie",    ["south skokie", "s. skokie", "s skokie"]],
+  ["South Bend",      ["south bend"]],
+  ["Bourbonnais",     ["bourbonnais", "northfield square"]],
+  ["Elkhart",         ["elkhart", "northfield center"]],
+  ["Glenview",        ["glenview", "patriot marketplace"]],
+  ["Dekalb",          ["dekalb", "oakland shopping"]],
+  ["Kildeer",         ["kildeer"]],
+  ["Uptown",          ["uptown"]],
+  ["Evergreen Park",  ["evergreen park"]],
+  ["Round Lake Beach",["round lake"]],
+  ["Calumet City",    ["calumet"]],
+  ["Michigan City",   ["michigan city"]],
+  ["Tinley Park",     ["tinley"]],
+  ["Johnson City",    ["johnson city"]],
+  ["Greeneville",     ["greeneville"]],
+  ["Oak Ridge",       ["oak ridge"]],
+  ["Schererville",    ["schererville"]],
+  ["Valparaiso",      ["valparaiso"]],
+  ["Frankfort",       ["frankfort"]],
+  ["Evanston",        ["evanston"]],
+  ["Hammond",         ["hammond"]],
+  ["Burbank",         ["burbank"]],
+  ["Cicero",          ["cicero"]]
+];
+
+function npsMapStore(raw){
+  if(!raw) return null;
+  const m = String(raw).match(/^\s*(\d{4,6})/);
+  if(m && NPS_STORE_NUM[m[1]]) return NPS_STORE_NUM[m[1]];
+  const s = String(raw).toLowerCase();
+  for(const [name, keys] of NPS_STORE_ALIASES){
+    if(keys.some(k => s.includes(k))) return name;
+  }
+  return null;
+}
+
+function npsDateStr(v){
+  let d = null;
+  if(v instanceof Date){ d = v; }
+  else if(typeof v === "number"){
+    d = new Date(Math.round((v - 25569) * 86400000));
+    return d.getUTCFullYear() + "-" + String(d.getUTCMonth()+1).padStart(2,"0") + "-" + String(d.getUTCDate()).padStart(2,"0");
+  }
+  else if(v){ const t = new Date(v); if(!isNaN(t.getTime())) d = t; }
+  if(!d || isNaN(d.getTime())) return null;
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+
+function npsPrettyDate(iso){
+  if(!iso) return "";
+  const [y,mo,da] = iso.split("-").map(Number);
+  const M = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return M[mo-1] + " " + da + ", " + y;
+}
+
+function npsCleanText(v){
+  if(v == null) return "";
+  let s = String(v);
+  // The export writes some unicode as literal "\uXXXX" sequences — decode them.
+  s = s.replace(/\\u([0-9a-fA-F]{4})/g, (m,h) => String.fromCharCode(parseInt(h,16)));
+  return s.trim();
+}
+
+function npsEsc(s){
+  return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// Bucket per Jeff's spec: 9-10 good (green), 8 ok (yellow), 0-7 bad (red).
+function npsBucket(score){ return score >= 9 ? "good" : score === 8 ? "ok" : "bad"; }
+
+// Parse the tNPS Responses export workbook into survey objects.
+function parseNpsWorkbook(wb){
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  if(!ws) throw new Error("Workbook has no sheets");
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  let hr = -1;
+  for(let i = 0; i < Math.min(15, rows.length); i++){
+    const r = rows[i];
+    if(r && r.some(c => c != null && String(c).trim() === "Employee NTID")){ hr = i; break; }
+  }
+  if(hr < 0) throw new Error('Header row not found (no "Employee NTID" column). Is this the tNPS Responses export?');
+  const h = rows[hr].map(c => c == null ? "" : String(c).trim());
+  const iId       = h.findIndex(c => /^surveyid/i.test(c));
+  const iTxn      = h.findIndex(c => c.toLowerCase() === "transaction date");
+  const iResp     = h.findIndex(c => c.toLowerCase() === "response date");
+  const iNtid     = h.indexOf("Employee NTID");
+  const iScore    = h.findIndex(c => c.toLowerCase() === "sms tnps");       // col J
+  const iScoreAlt = h.findIndex(c => c.toLowerCase() === "tnps");           // col K fallback
+  const iReason   = h.findIndex(c => c.toLowerCase() === "reason for score"); // col L
+  let iType  = h.findIndex(c => /retail interaction/i.test(c));             // col AY
+  if(iType  < 0) iType  = 50;
+  let iStore = h.findIndex(c => c.toLowerCase() === "store id");            // col BE
+  if(iStore < 0) iStore = 56;
+
+  const surveys = [];
+  const unmatched = new Set();
+  for(let i = hr + 1; i < rows.length; i++){
+    const r = rows[i];
+    if(!r) continue;
+    const id = r[iId] != null ? String(r[iId]).trim() : "";
+    let score = r[iScore];
+    if((score == null || score === "") && iScoreAlt >= 0) score = r[iScoreAlt];
+    if(!id || score == null || score === "") continue;
+    score = Number(score);
+    if(isNaN(score)) continue;
+    const rawStore = r[iStore] != null ? String(r[iStore]).trim() : "";
+    const storeKey = npsMapStore(rawStore);
+    if(!storeKey && rawStore) unmatched.add(rawStore);
+    surveys.push({
+      id: id,
+      score: score,
+      txnDate:  npsDateStr(r[iTxn]),
+      respDate: npsDateStr(r[iResp]),
+      ntid:     r[iNtid] != null ? String(r[iNtid]).trim() : "",
+      comment:  npsCleanText(r[iReason]),
+      txnType:  r[iType] != null ? String(r[iType]).trim() : "",
+      storeKey: storeKey,
+      storeRaw: rawStore
+    });
+  }
+  return { surveys: surveys, unmatched: Array.from(unmatched) };
+}
+
+async function npsFetchDirectory(){
+  const r = await fetch(NPS_CONFIG.DIRECTORY_URL + "?t=" + Date.now(), { cache: "no-store" });
+  if(!r.ok) throw new Error("store-directory.json HTTP " + r.status);
+  return await r.json();
+}
+
+// Compact version of the DM-Visit-Guide "Store Rank" parser (same header regexes).
+async function npsFetchSalesStores(){
+  const resp = await fetch(NPS_CONFIG.NPS_SALES_REPORT_URL + "?t=" + Date.now(), { cache: "no-store" });
+  if(!resp.ok) throw new Error("Sales report HTTP " + resp.status);
+  const wb = XLSX.read(await resp.arrayBuffer(), { type: "array" });
+  const ws = wb.Sheets["Store Rank"];
+  if(!ws) return [];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  let hr = -1;
+  for(let i = 0; i < Math.min(20, rows.length); i++){
+    if(rows[i] && rows[i].some(c => c && String(c).trim() === "Rank")){ hr = i; break; }
+  }
+  if(hr < 0) return [];
+  const h = rows[hr].map(c => c == null ? "" : String(c).trim());
+  const num = v => { const n = Number(v); return isNaN(n) ? 0 : n; };
+  const idx = {
+    rank:      h.findIndex(c => c.trim() === "Rank"),
+    region:    h.findIndex(c => c.toLowerCase().includes("region")),
+    store:     h.findIndex(c => c.toLowerCase().includes("store")),
+    rsd:       h.findIndex(c => c.toLowerCase().includes("rsd")),
+    dm:        h.findIndex(c => c.trim().toLowerCase() === "dm"),
+    sm:        h.findIndex(c => c.trim().toLowerCase() === "sm"),
+    gpTrend:   h.findIndex(c => /^GP\s*\$\s*Trend$/i.test(c)),
+    mobileCR:  h.findIndex(c => /^Mobile\s*Close\s*rate$/i.test(c)),
+    fiscalCR:  h.findIndex(c => /^Fiscal\s*Close\s*Rate$/i.test(c)),
+    nonTrad:   h.findIndex(c => /^Non\s*Traditional\s*CR$/i.test(c)),
+    gigPct:    h.findIndex(c => /^GIG\s*Plans[\s\S]*%[\s\S]*10\s*Pts/i.test(c)),
+    plusMix:   h.findIndex(c => /Mobile\s*Plus\s*Mix[\s\S]*5\s*Pts/i.test(c)),
+    newToUpg:  h.findIndex(c => /NEW\s*TO\s*UPGR\s*%/i.test(c)),
+    accPerDev: h.findIndex(c => /Accessory.*per\s*Device.*Net/i.test(c)),
+    nps:       h.findIndex(c => /^Fiscal\s*NPS$/i.test(c)),
+    newRGU:    h.findIndex(c => /^NEW\s*RGU$/i.test(c)),
+    mobileMTD: h.findIndex(c => /^Mobile\s*MTD$/i.test(c)),
+    tabletMTD: h.findIndex(c => /^Tablet\s*MTD$/i.test(c)),
+    watchMTD:  h.findIndex(c => /^Watches\s*MTD$/i.test(c))
+  };
+  const out = [];
+  for(let i = hr + 1; i < rows.length; i++){
+    const r = rows[i];
+    if(!r || r[idx.rank] == null) break;
+    const rsd = r[idx.rsd];
+    if(!rsd || !String(rsd).includes(NPS_CONFIG.RSD_FILTER)) continue;
+    const g = k => idx[k] >= 0 ? num(r[idx[k]]) : 0;
+    out.push({
+      rank: num(r[idx.rank]),
+      region: r[idx.region] || "", name: r[idx.store] || "",
+      dm: r[idx.dm] || "", sm: r[idx.sm] || "",
+      gpTrend: g("gpTrend"), mobileCR: g("mobileCR"), fiscalCR: g("fiscalCR"),
+      nonTrad: g("nonTrad"), gigPct: g("gigPct"), plusMix: g("plusMix"),
+      newToUpg: g("newToUpg"), accPerDev: g("accPerDev"), nps: g("nps"),
+      newRGU: g("newRGU"), mobileMTD: g("mobileMTD"), tabletMTD: g("tabletMTD"), watchMTD: g("watchMTD")
+    });
+  }
+  return out;
+}
+
+function npsPctFmt(v){
+  const n = Number(v) || 0;
+  return (Math.abs(n) <= 1.5 ? n * 100 : n).toFixed(1) + "%";
+}
+function npsMoneyFmt(v){ return "$" + Math.round(Number(v) || 0).toLocaleString("en-US"); }
+
+function npsMedian(arr){
+  const a = arr.slice().sort((x,y) => x - y);
+  if(!a.length) return 0;
+  const mid = Math.floor(a.length / 2);
+  return a.length % 2 ? a[mid] : (a[mid-1] + a[mid]) / 2;
+}
+
+function npsTileHtml(label, value, tone){
+  const bg = tone === "good" ? "#ecfdf5" : tone === "bad" ? "#fef2f2" : "#f8fafc";
+  const bd = tone === "good" ? "#a7f3d0" : tone === "bad" ? "#fecaca" : "#e2e8f0";
+  const col = tone === "good" ? "#047857" : tone === "bad" ? "#b91c1c" : "#0f172a";
+  return '<td width="33%" style="padding:4px;vertical-align:top;">' +
+    '<div style="background:' + bg + ';border:1px solid ' + bd + ';border-radius:8px;padding:10px 12px;">' +
+    '<div style="font-size:10px;letter-spacing:0.8px;color:#64748b;text-transform:uppercase;font-weight:600;">' + label + '</div>' +
+    '<div style="font-size:18px;font-weight:700;color:' + col + ';margin-top:2px;">' + value + '</div>' +
+    '</div></td>';
+}
+
+function npsSurveyBoxHtml(s){
+  const b = npsBucket(s.score);
+  const border = b === "good" ? "#10b981" : b === "ok" ? "#f59e0b" : "#ef4444";
+  const bg     = b === "good" ? "#ecfdf5" : b === "ok" ? "#fffbeb" : "#fef2f2";
+  const badge  = b === "good" ? "#10b981" : b === "ok" ? "#f59e0b" : "#ef4444";
+  const bw     = b === "bad" ? "2px" : "1px";
+  const meta = [s.txnType, s.ntid, npsPrettyDate(s.txnDate)].filter(Boolean).map(npsEsc).join(" &nbsp;&bull;&nbsp; ");
+  const comment = s.comment
+    ? '<div style="font-size:14px;color:#0f172a;margin-top:6px;line-height:1.5;">&ldquo;' + npsEsc(s.comment) + '&rdquo;</div>'
+    : '<div style="font-size:13px;color:#94a3b8;font-style:italic;margin-top:6px;">No comment left</div>';
+  return '<table width="100%" cellpadding="0" cellspacing="0" style="border:' + bw + ' solid ' + border + ';background:' + bg + ';border-radius:10px;margin:0 0 10px 0;">' +
+    '<tr><td width="56" align="center" style="padding:14px 0 14px 12px;vertical-align:top;">' +
+    '<div style="width:40px;height:40px;border-radius:50%;background:' + badge + ';color:#ffffff;font-weight:800;font-size:17px;line-height:40px;text-align:center;">' + s.score + '</div>' +
+    '</td><td style="padding:12px 14px;vertical-align:top;">' +
+    '<div style="font-size:12px;color:#475569;font-weight:600;">' + meta + '</div>' + comment +
+    '</td></tr></table>';
+}
+
+// Build the full HTML email + webhook payload for one store.
+function buildNpsPayload(shortName, surveys, salesStores, dir){
+  const fullKey = shortName + " Xfinity Store";
+  const smEmail = (dir.storeManagers || {})[fullKey] || "";
+  const dmEmail = (dir.storeDMs || {})[fullKey] || "";
+  const smName  = (dir.storeManagerNames || {})[fullKey] || "";
+
+  const to = smEmail || dmEmail || NPS_CONFIG.MY_EMAIL;
+  const cc = Array.from(new Set([dmEmail, NPS_CONFIG.MY_EMAIL]
+    .filter(e => e && e.toLowerCase() !== to.toLowerCase()))).join(",");
+
+  const good = surveys.filter(s => npsBucket(s.score) === "good");
+  const ok   = surveys.filter(s => npsBucket(s.score) === "ok");
+  const bad  = surveys.filter(s => npsBucket(s.score) === "bad");
+  const tnps = surveys.length ? Math.round(((good.length - bad.length) / surveys.length) * 100) : 0;
+
+  const dates = surveys.map(s => s.txnDate).filter(Boolean).sort();
+  const dateLabel = dates.length
+    ? (dates[0] === dates[dates.length-1]
+        ? npsPrettyDate(dates[0])
+        : npsPrettyDate(dates[0]) + " &ndash; " + npsPrettyDate(dates[dates.length-1]))
+    : npsPrettyDate(npsDateStr(new Date()));
+
+  // --- Store performance header (from Sales Report "Store Rank") ---
+  const row = (salesStores || []).find(s => String(s.name).trim().toLowerCase() === shortName.toLowerCase());
+  let headerHtml, tilesHtml = "";
+  if(row){
+    const med = {};
+    ["gpTrend","mobileCR","fiscalCR","nonTrad","gigPct","plusMix","newToUpg","accPerDev","nps"].forEach(k => {
+      med[k] = npsMedian(salesStores.map(s => s[k]));
+    });
+    const tone = k => row[k] >= med[k] ? "good" : "bad";
+    const totalRGU = row.newRGU;
+    headerHtml =
+      '<div style="margin-bottom:10px;"><span style="background:#f97316;color:#ffffff;font-size:11px;font-weight:700;letter-spacing:1px;padding:4px 12px;border-radius:999px;">RANK #' + row.rank + '</span></div>' +
+      '<div style="color:#ffffff;font-size:26px;font-weight:700;">' + npsEsc(shortName) + '</div>' +
+      '<div style="color:#cbd5e1;font-size:13px;margin-top:4px;">' + npsEsc(row.region || "") + ' &nbsp;&bull;&nbsp; SM: ' + npsEsc(smName || row.sm || "No Mgr") + ' &nbsp;&bull;&nbsp; DM: ' + npsEsc(row.dm || "") + '</div>' +
+      '<div style="margin-top:12px;"><span style="color:#fb923c;font-size:32px;font-weight:800;">' + npsMoneyFmt(row.gpTrend) + '</span> <span style="color:#94a3b8;font-size:11px;letter-spacing:1px;font-weight:600;">&nbsp;GP TREND</span></div>';
+    tilesHtml =
+      '<table width="100%" cellpadding="0" cellspacing="0"><tr>' +
+        npsTileHtml("Total RGU", totalRGU, null) +
+        npsTileHtml("Mobile", row.mobileMTD, null) +
+        npsTileHtml("Tablet / Watch", row.tabletMTD + " / " + row.watchMTD, null) +
+      '</tr><tr>' +
+        npsTileHtml("Mob Close Rate", npsPctFmt(row.mobileCR), tone("mobileCR")) +
+        npsTileHtml("Fiscal CR", npsPctFmt(row.fiscalCR), tone("fiscalCR")) +
+        npsTileHtml("Non-Trad", npsPctFmt(row.nonTrad), tone("nonTrad")) +
+      '</tr><tr>' +
+        npsTileHtml("Gig Plans %", npsPctFmt(row.gigPct), tone("gigPct")) +
+        npsTileHtml("Plus Mix", npsPctFmt(row.plusMix), tone("plusMix")) +
+        npsTileHtml("New &rarr; Upgrade", npsPctFmt(row.newToUpg), tone("newToUpg")) +
+      '</tr><tr>' +
+        npsTileHtml("Accessories", npsMoneyFmt(row.accPerDev), tone("accPerDev")) +
+        npsTileHtml("Fiscal NPS", npsPctFmt(row.nps), tone("nps")) +
+        npsTileHtml("GP Trend", npsMoneyFmt(row.gpTrend), tone("gpTrend")) +
+      '</tr></table>';
+  } else {
+    headerHtml =
+      '<div style="color:#ffffff;font-size:26px;font-weight:700;">' + npsEsc(shortName) + '</div>' +
+      '<div style="color:#cbd5e1;font-size:13px;margin-top:4px;">SM: ' + npsEsc(smName || "No Mgr") + '</div>';
+  }
+
+  const section = (title, color, list) => {
+    if(!list.length) return "";
+    return '<div style="font-size:12px;font-weight:800;letter-spacing:1px;color:' + color + ';margin:18px 0 8px 0;text-transform:uppercase;">' + title + ' (' + list.length + ')</div>' +
+      list.map(npsSurveyBoxHtml).join("");
+  };
+
+  const bodyHtml =
+'<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f1f5f9;">' +
+'<div style="background:#f1f5f9;padding:24px 12px;font-family:Segoe UI,Arial,Helvetica,sans-serif;">' +
+'<table width="640" cellpadding="0" cellspacing="0" align="center" style="max-width:640px;width:100%;">' +
+'<tr><td style="background:#1e3a8a;border-radius:14px 14px 0 0;padding:26px 28px;">' + headerHtml + '</td></tr>' +
+(tilesHtml ? '<tr><td style="background:#ffffff;padding:14px 16px;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">' + tilesHtml + '</td></tr>' : '') +
+'<tr><td style="background:#ffffff;padding:20px 24px 8px 24px;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">' +
+'<div style="font-size:18px;font-weight:800;color:#0f172a;">Yesterday&rsquo;s NPS Surveys</div>' +
+'<div style="font-size:13px;color:#64748b;margin-top:4px;">' + dateLabel + ' &nbsp;&bull;&nbsp; ' + surveys.length + ' response' + (surveys.length === 1 ? "" : "s") + ' &nbsp;&bull;&nbsp; Daily tNPS: <strong style="color:' + (tnps >= 0 ? "#047857" : "#b91c1c") + ';">' + tnps + '</strong></div>' +
+'<div style="margin-top:10px;font-size:12px;color:#475569;">' +
+'<span style="background:#ecfdf5;border:1px solid #10b981;color:#047857;border-radius:999px;padding:3px 10px;font-weight:700;">' + good.length + ' Good (9&ndash;10)</span>&nbsp; ' +
+'<span style="background:#fffbeb;border:1px solid #f59e0b;color:#b45309;border-radius:999px;padding:3px 10px;font-weight:700;">' + ok.length + ' OK (8)</span>&nbsp; ' +
+'<span style="background:#fef2f2;border:1px solid #ef4444;color:#b91c1c;border-radius:999px;padding:3px 10px;font-weight:700;">' + bad.length + ' Needs Attention (0&ndash;7)</span>' +
+'</div></td></tr>' +
+'<tr><td style="background:#ffffff;padding:6px 24px 22px 24px;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">' +
+section("&#9888; Needs Attention", "#b91c1c", bad) +
+section("Almost There", "#b45309", ok) +
+section("Wins", "#047857", good) +
+'</td></tr>' +
+'<tr><td style="background:#0f172a;border-radius:0 0 14px 14px;padding:16px 24px;text-align:center;">' +
+'<a href="' + NPS_CONFIG.DASHBOARD_URL + '" style="color:#60a5fa;font-size:13px;font-weight:600;text-decoration:none;">Open the NPS Report dashboard &rarr;</a>' +
+'<div style="color:#64748b;font-size:11px;margin-top:6px;">Sent automatically from the Blufox Daily Upload</div>' +
+'</td></tr></table></div></body></html>';
+
+  const subject = "NPS Daily Digest — " + shortName + " — " +
+    surveys.length + " survey" + (surveys.length === 1 ? "" : "s") +
+    (bad.length ? " (" + bad.length + " need attention)" : " (all clear)");
+
+  return {
+    store: shortName, store_full: fullKey,
+    to: to, cc: cc, subject: subject, body_html: bodyHtml,
+    good: good.length, ok: ok.length, bad: bad.length,
+    total: surveys.length, tnps: tnps,
+    date: npsDateStr(new Date())
+  };
+}
+
+function npsHookReady(){
+  return /^https:\/\/hooks\.zapier\.com\//.test(NPS_CONFIG.WEBHOOK_URL);
+}
+
+async function npsPostWebhook(payload){
+  // text/plain keeps this a "simple" CORS request so Zapier's catch hook
+  // accepts it without a preflight (same trick as the DM Visit Guide).
+  const resp = await fetch(NPS_CONFIG.WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=UTF-8" },
+    body: JSON.stringify(payload)
+  });
+  if(!resp.ok) throw new Error("Webhook HTTP " + resp.status);
+}
+
+// Group surveys by storeKey, build a payload per store, POST each to Zapier.
+// Returns { sent, errors:[] }
+async function npsSendEmails(surveys, salesStores, dir){
+  const groups = {};
+  surveys.forEach(s => { if(s.storeKey){ (groups[s.storeKey] = groups[s.storeKey] || []).push(s); } });
+  let sent = 0; const errors = [];
+  for(const shortName of Object.keys(groups).sort()){
+    try {
+      const payload = buildNpsPayload(shortName, groups[shortName], salesStores, dir);
+      await npsPostWebhook(payload);
+      sent++;
+    } catch(e){ errors.push(shortName + ": " + e.message); }
+  }
+  return { sent: sent, errors: errors, storeCount: Object.keys(groups).length };
+}
+// === END NPS SHARED MODULE ===
+
+
+// ===================== DASHBOARD =====================
+let DATA = null, DIR = null;
+let tab = "yesterday";
+const bands = { good: true, ok: true, bad: true };
+
+function setTab(t){
+  tab = t;
+  document.getElementById("tabYesterday").classList.toggle("active", t === "yesterday");
+  document.getElementById("tabMtd").classList.toggle("active", t === "mtd");
+  document.getElementById("toolbar").style.display = (t === "yesterday" && npsHookReady()) ? "flex" : "none";
+  render();
+}
+
+function toggleBand(b){
+  bands[b] = !bands[b];
+  const el = document.getElementById(b === "good" ? "chipGood" : b === "ok" ? "chipOk" : "chipBad");
+  el.classList.toggle("on-" + b, bands[b]);
+  render();
+}
+
+function banner(msg, type){
+  const el = document.getElementById("banner");
+  el.className = "banner " + (type || "");
+  el.innerHTML = msg || "";
+}
+
+function dmShort(email){
+  if(!email) return "";
+  const map = {
+    "jucarrillo@blufoxmobile.com": "Juan Carrillo",
+    "jcabrales@blufoxmobile.com": "J. Cabrales",
+    "idhorajiwala@blufoxmobile.com": "I. Dhorajiwala",
+    "mbrooks@blufoxmobile.com": "M. Brooks",
+    "jbilbrey@blufoxmobile.com": "Jeff Bilbrey"
+  };
+  return map[email.toLowerCase()] || email.split("@")[0];
+}
+
+function currentSurveys(){
+  if(!DATA) return [];
+  if(tab === "yesterday"){
+    const ids = new Set(DATA.lastBatchIds || []);
+    return (DATA.surveys || []).filter(s => ids.has(s.id));
+  }
+  const now = new Date();
+  const monthPrefix = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
+  return (DATA.surveys || []).filter(s => (s.txnDate || "").startsWith(monthPrefix));
+}
+
+function render(){
+  if(!DATA || !DIR) return;
+  const storeF = document.getElementById("storeFilter").value;
+  const dmF = document.getElementById("dmFilter").value;
+
+  let list = currentSurveys();
+  if(storeF) list = list.filter(s => s.storeKey === storeF);
+  if(dmF) list = list.filter(s => {
+    const dm = (DIR.storeDMs || {})[(s.storeKey || "") + " Xfinity Store"] || "";
+    return dm.toLowerCase() === dmF.toLowerCase();
+  });
+  list = list.filter(s => bands[npsBucket(s.score)]);
+
+  // summary (band filter applied so the cards match what you see)
+  const good = list.filter(s => npsBucket(s.score) === "good").length;
+  const ok   = list.filter(s => npsBucket(s.score) === "ok").length;
+  const bad  = list.filter(s => npsBucket(s.score) === "bad").length;
+  const tnps = list.length ? Math.round(((good - bad) / list.length) * 100) : 0;
+  const withComments = list.filter(s => s.comment).length;
+  document.getElementById("summary").innerHTML =
+    sumCard("Surveys", list.length, "") +
+    sumCard("Good (9–10)", good, "good") +
+    sumCard("OK (8)", ok, "ok") +
+    sumCard("Needs Attn (0–7)", bad, "bad") +
+    sumCard("tNPS", tnps, tnps >= 0 ? "good" : "bad") +
+    sumCard("With Comments", withComments, "");
+
+  // group by store
+  const groups = {};
+  list.forEach(s => {
+    const k = s.storeKey || ("⚠ Unmatched: " + s.storeRaw);
+    (groups[k] = groups[k] || []).push(s);
+  });
+  const keys = Object.keys(groups).sort((a,b) => {
+    const badA = groups[a].filter(s => npsBucket(s.score) === "bad").length;
+    const badB = groups[b].filter(s => npsBucket(s.score) === "bad").length;
+    return badB - badA || a.localeCompare(b);
+  });
+
+  const out = keys.map(k => {
+    const fullKey = k + " Xfinity Store";
+    const sm = (DIR.storeManagerNames || {})[fullKey] || "";
+    const dm = dmShort((DIR.storeDMs || {})[fullKey] || "");
+    const g = groups[k];
+    const gd = g.filter(s => npsBucket(s.score) === "good").length;
+    const ok2 = g.filter(s => npsBucket(s.score) === "ok").length;
+    const bd = g.filter(s => npsBucket(s.score) === "bad").length;
+    const rows = g.slice().sort((a,b) => a.score - b.score).map(s => {
+      const meta = [s.txnType, s.ntid, npsPrettyDate(s.txnDate)].filter(Boolean).map(npsEsc).join(" • ");
+      const c = s.comment
+        ? '<div class="comment">“' + npsEsc(s.comment) + '”</div>'
+        : '<div class="comment none">No comment left</div>';
+      return '<div class="survey ' + npsBucket(s.score) + '"><div class="score">' + s.score + '</div><div><div class="meta">' + meta + '</div>' + c + '</div></div>';
+    }).join("");
+    return '<div class="storeblock"><div class="storehead"><h2>' + npsEsc(k) + '</h2>' +
+      '<span class="sub">' + (sm ? "SM: " + npsEsc(sm) : "") + (dm ? " • DM: " + npsEsc(dm) : "") + '</span>' +
+      '<span class="counts"><span style="color:#6ee7b7;">' + gd + ' good</span> • <span style="color:#fcd34d;">' + ok2 + ' ok</span> • <span style="color:#fca5a5;">' + bd + ' bad</span></span>' +
+      '</div><div class="storebody">' + rows + '</div></div>';
+  }).join("");
+
+  document.getElementById("results").innerHTML = out ||
+    '<div class="empty">No surveys match the current filters' + (tab === "yesterday" ? " in the last upload batch." : " this month.") + '</div>';
+}
+
+function sumCard(lbl, val, cls){
+  return '<div class="sumcard ' + cls + '"><div class="lbl">' + lbl + '</div><div class="val">' + val + '</div></div>';
+}
+
+async function resendEmails(){
+  const btn = document.getElementById("resendBtn");
+  if(!npsHookReady()){ banner("Zapier webhook URL not configured in this file.", "error"); return; }
+  const list = (function(){
+    const ids = new Set(DATA.lastBatchIds || []);
+    return (DATA.surveys || []).filter(s => ids.has(s.id) && s.storeKey);
+  })();
+  if(!list.length){ banner("Nothing in the last batch to send.", "error"); return; }
+  if(!confirm("Re-send digest emails for " + list.length + " surveys? SMs and DMs will receive duplicates of today's email.")) return;
+  btn.disabled = true;
+  banner("Building & sending emails…", "info");
+  try {
+    let salesStores = [];
+    try { salesStores = await npsFetchSalesStores(); } catch(e){ console.warn(e); }
+    const res = await npsSendEmails(list, salesStores, DIR);
+    banner("✅ Sent " + res.sent + " of " + res.storeCount + " store digests." +
+      (res.errors.length ? "<br>⚠ " + res.errors.join("; ") : ""), res.errors.length ? "error" : "success");
+  } catch(e){
+    banner("❌ " + e.message, "error");
+  } finally { btn.disabled = false; }
+}
+
+async function init(){
+  try {
+    const [dataR, dirR] = await Promise.all([
+      fetch(NPS_CONFIG.RESPONSES_URL + "?t=" + Date.now(), { cache: "no-store" }),
+      fetch(NPS_CONFIG.DIRECTORY_URL + "?t=" + Date.now(), { cache: "no-store" })
+    ]);
+    if(!dirR.ok) throw new Error("store-directory.json HTTP " + dirR.status);
+    DIR = await dirR.json();
+    if(!dataR.ok){
+      document.getElementById("results").innerHTML = '<div class="empty">No NPS data yet — upload your first tNPS Responses export on the <a href="https://blufoxmobile.github.io/Daily-Sales-Report/upload.html" style="color:#60a5fa;">Daily Upload page</a>.</div>';
+      document.getElementById("updatedAt").textContent = "Waiting for first upload";
+      return;
+    }
+    DATA = await dataR.json();
+
+    // filters
+    const stores = Array.from(new Set((DATA.surveys || []).map(s => s.storeKey).filter(Boolean))).sort();
+    document.getElementById("storeFilter").innerHTML = '<option value="">All Stores</option>' +
+      stores.map(s => '<option>' + npsEsc(s) + '</option>').join("");
+    const dms = Array.from(new Set(Object.values(DIR.storeDMs || {}))).sort();
+    document.getElementById("dmFilter").innerHTML = '<option value="">All DMs</option>' +
+      dms.map(d => '<option value="' + npsEsc(d) + '">' + npsEsc(dmShort(d)) + '</option>').join("");
+
+    const upd = DATA.updatedAt ? new Date(DATA.updatedAt) : null;
+    document.getElementById("updatedAt").textContent =
+      "Last upload: " + (upd ? upd.toLocaleString() : "unknown") +
+      " • Batch of " + (DATA.lastBatchIds || []).length + " new surveys (" + (DATA.lastBatchDate || "") + ")";
+    document.getElementById("src").textContent = "Source: nps-responses.json • store-directory.json • Daily-Sales-Report repo";
+    if((DATA.unmatched || []).length){
+      banner("⚠ Unmatched store IDs in last upload: " + DATA.unmatched.map(npsEsc).join("; ") +
+        " — add them to NPS_STORE_NUM / NPS_STORE_ALIASES.", "error");
+    }
+    document.getElementById("toolbar").style.display = (tab === "yesterday" && npsHookReady()) ? "flex" : "none";
+    render();
+  } catch(e){
+    document.getElementById("results").innerHTML = '<div class="empty">❌ ' + npsEsc(e.message) + '</div>';
+  }
+}
+init();
+</script>
+</body>
+</html>
