@@ -281,14 +281,14 @@ async function npsFetchSalesStores(){
     dm:        h.findIndex(c => c.trim().toLowerCase() === "dm"),
     sm:        h.findIndex(c => c.trim().toLowerCase() === "sm"),
     gpTrend:   h.findIndex(c => /^GP\s*\$\s*Trend$/i.test(c)),
-    mobileCR:  h.findIndex(c => /^Mobile\s*Close\s*rate$/i.test(c)),
-    fiscalCR:  h.findIndex(c => /^Fiscal\s*Close\s*Rate$/i.test(c)),
-    nonTrad:   h.findIndex(c => /^Non\s*Traditional\s*CR$/i.test(c)),
+    mobileCR:  h.findIndex(c => c.toLowerCase().includes("mobile close rate")),
+    fiscalCR:  h.findIndex(c => c.toLowerCase().includes("fiscal close rate")),
+    nonTrad:   h.findIndex(c => c.toLowerCase().includes("non traditional")),
     gigPct:    h.findIndex(c => /^GIG\s*Plans[\s\S]*%[\s\S]*10\s*Pts/i.test(c)),
     plusMix:   h.findIndex(c => /Mobile\s*Plus\s*Mix[\s\S]*5\s*Pts/i.test(c)),
     newToUpg:  h.findIndex(c => /NEW\s*TO\s*UPGR\s*%/i.test(c)),
     accPerDev: h.findIndex(c => /Accessory.*per\s*Device.*Net/i.test(c)),
-    nps:       h.findIndex(c => /^Fiscal\s*NPS$/i.test(c)),
+    nps:       h.findIndex(c => c.toLowerCase().includes("fiscal nps") && !c.toLowerCase().includes("last")),
     newRGU:    h.findIndex(c => /^NEW\s*RGU$/i.test(c)),
     mobileMTD: h.findIndex(c => /^Mobile\s*MTD$/i.test(c)),
     tabletMTD: h.findIndex(c => /^Tablet\s*MTD$/i.test(c)),
@@ -394,6 +394,93 @@ async function npsFetchTSheets(){
   }
   NPS_TCHARTS = { byStore: byStore, byRep: byRep, total: total, loaded: true };
   return NPS_TCHARTS;
+}
+
+// ===== Lunch Punch Audit (best-effort) — missed lunch punches per store =====
+// Mirrors the Auto-Punch-Report "By Store" tab: an employee-day with 1–3 punches
+// (fewer than clock-in / lunch-out / lunch-in / clock-out) is a missed lunch
+// punch. Managers are excluded, exactly like the dashboard. Never blocks emails.
+let NPS_PUNCH = { byStore: {}, total: 0, loaded: false };
+const NPS_PUNCH_URL  = "https://raw.githubusercontent.com/BlufoxMobile/Auto-Punch-Report/main/data/punch-data.xlsx";
+const NPS_MGR_TITLES = ["Store Manager", "DM", "Ops Coordinator"];
+
+// Same logic the punch dashboard uses to read a punch time out of a cell.
+function npsPunchTime(v){
+  if(v == null || v === "") return "";
+  if(v instanceof Date){
+    return String(v.getHours()).padStart(2,"0") + ":" +
+           String(v.getMinutes()).padStart(2,"0") + ":" +
+           String(v.getSeconds()).padStart(2,"0");
+  }
+  const m = String(v).match(/(\d{2}:\d{2}:\d{2})/);
+  return m ? m[1] : "00:00:00";
+}
+
+async function npsFetchPunches(){
+  const resp = await fetch(NPS_PUNCH_URL + "?_=" + Date.now(), { cache: "no-store" });
+  if(!resp.ok) throw new Error("Punch data HTTP " + resp.status);
+  const wb = XLSX.read(await resp.arrayBuffer(), { type: "array", cellDates: true });
+  const sn = wb.SheetNames.find(s => /punch.?status/i.test(s))
+          || wb.SheetNames.find(s => /break.*compliance/i.test(s))
+          || wb.SheetNames.find(s => /punch/i.test(s))
+          || wb.SheetNames[0];
+  const ws = wb.Sheets[sn];
+  if(!ws){ NPS_PUNCH = { byStore: {}, total: 0, loaded: true }; return NPS_PUNCH; }
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true, cellDates: true });
+  if(!rows.length){ NPS_PUNCH = { byStore: {}, total: 0, loaded: true }; return NPS_PUNCH; }
+
+  const H = Object.keys(rows[0]);
+  const findH = re => H.find(h => re.test(String(h).trim()));
+  const cPunchTime = findH(/^punch\s*time$/i);
+
+  // Collapse rows into per-(store, employee, date) day records → punch count.
+  const days = {};
+  if(cPunchTime){
+    // Long form: one row per punch.
+    const cStore = findH(/^store$/i)       || "Store";
+    const cName  = findH(/^name$/i)        || findH(/^employee$/i) || findH(/employee.?name/i) || "Name";
+    const cTitle = findH(/^job\s*title$/i) || findH(/^title$/i)    || "Title";
+    const cDate  = findH(/^date$/i)        || findH(/punch.*in.*date/i) || "Date";
+    rows.forEach(r => {
+      const t = npsPunchTime(r[cPunchTime]);
+      if(!t || t === "00:00:00") return;
+      const k = String(r[cStore]||"") + "||" + String(r[cName]||"") + "||" + String(r[cDate]||"");
+      if(!days[k]) days[k] = { store: String(r[cStore]||""), title: String(r[cTitle]||""), cnt: 0 };
+      days[k].cnt++;
+    });
+  } else {
+    // Wide form: one row per employee-day with up to 4 punch columns.
+    const cStore = findH(/^store$/i)              || "Store";
+    const cEmp   = findH(/^employee$/i)           || findH(/employee.?name/i) || "Employee";
+    const cTitle = findH(/^job\s*title$/i)        || findH(/^title$/i)        || "Job Title";
+    const cDate  = findH(/punch.*in.*date/i)      || findH(/^date$/i)         || "Punch In Date";
+    const cols   = [findH(/punch.?1.*time.*in\b/i) || "Punch 1 Time In",
+                    findH(/punch.?1.*time.*out/i)  || "Punch 1 Time Out",
+                    findH(/punch.?2.*time.*in\b/i) || "Punch 2 Time In",
+                    findH(/punch.?2.*time.*out/i)  || "Punch 2 Time Out"];
+    rows.forEach(r => {
+      let cnt = 0;
+      cols.forEach(c => { const t = npsPunchTime(r[c]); if(t && t !== "00:00:00") cnt++; });
+      if(!cnt) return;
+      const k = String(r[cStore]||"") + "||" + String(r[cEmp]||"") + "||" + String(r[cDate]||"");
+      days[k] = { store: String(r[cStore]||""), title: String(r[cTitle]||""), cnt: cnt };
+    });
+  }
+
+  // Per store: count employee-days with 1–3 punches, managers excluded, keyed by
+  // the same short store name the email loop uses.
+  const byStore = {};
+  let total = 0;
+  Object.keys(days).forEach(k => {
+    const d = days[k];
+    if(NPS_MGR_TITLES.includes(d.title)) return;
+    if(d.cnt >= 1 && d.cnt < 4){
+      const short = npsShortFromRaw(d.store);
+      if(short){ byStore[short] = (byStore[short] || 0) + 1; total++; }
+    }
+  });
+  NPS_PUNCH = { byStore: byStore, total: total, loaded: true };
+  return NPS_PUNCH;
 }
 
 // Minimal CSV parser (same semantics as the CRM's parseFuCSV).
@@ -695,13 +782,15 @@ function buildNpsPayload(shortName, surveys, salesStores, dir){
   const agedCount = (NPS_CRM.aged  || {})[shortName] || 0;
   const leadObj   = (NPS_CRM.leads || {})[shortName] || { approved: 0, resubmit: 0 };
   const leadCount = (leadObj.approved || 0) + (leadObj.resubmit || 0);
-  const crmLoaded = NPS_CRM.loaded;
+  const crmLoaded   = NPS_CRM.loaded;
+  const punchCount  = (NPS_PUNCH.byStore || {})[shortName] || 0;
+  const punchLoaded = NPS_PUNCH.loaded;
   let actionHtml = "";
-  if(crmLoaded){
+  if(crmLoaded || punchLoaded){
     const SHOW_MAX = 5;
     const openItems = ((NPS_CRM.openList || {})[shortName] || []);
     const leadItems = ((NPS_CRM.leadList || {})[shortName] || []);
-    const allClear = openCount === 0 && leadCount === 0;
+    const allClear = openCount === 0 && leadCount === 0 && punchCount === 0;
 
     const subHead = (n, label, sub) =>
       '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:14px;"><tr>' +
@@ -739,6 +828,11 @@ function buildNpsPayload(shortName, surveys, salesStores, dir){
       detail += subHead(leadCount, "Lead Follow-Ups to work",
         leadCount ? (leadObj.approved || 0) + " approved to contact &bull; " + (leadObj.resubmit || 0) + " to resubmit" : "Nothing pending &mdash; clear");
       detail += leadItems.slice(0, SHOW_MAX).map(leadLine).join("") + moreLine(leadCount - Math.min(leadItems.length, SHOW_MAX));
+      if(punchLoaded){
+        detail += subHead(punchCount, "Missed Lunch Punches",
+          punchCount ? "Employee-days with fewer than 4 punches (managers excluded) &mdash; fix in the Punch Audit"
+                     : "No missed lunch punches &mdash; clear");
+      }
     }
 
     actionHtml =
@@ -747,7 +841,9 @@ function buildNpsPayload(shortName, surveys, salesStores, dir){
       (allClear
         ? '<div style="font-size:13px;color:#047857;font-weight:600;margin-top:8px;">All caught up &mdash; no open orders and no lead follow-ups. Nice work.</div>'
         : detail) +
-      '<div style="margin-top:14px;"><a href="' + NPS_CONFIG.CRM_URL + '" style="background:#ea580c;color:#ffffff;padding:10px 18px;border-radius:8px;display:inline-block;font-weight:700;font-size:13px;text-decoration:none;">Close them out in the Store CRM &rarr;</a></div>' +
+      '<div style="margin-top:14px;"><a href="' + NPS_CONFIG.CRM_URL + '" style="background:#ea580c;color:#ffffff;padding:10px 18px;border-radius:8px;display:inline-block;font-weight:700;font-size:13px;text-decoration:none;margin:0 6px 6px 0;">Close them out in the Store CRM &rarr;</a>' +
+      (punchLoaded ? '<a href="https://blufoxmobile.github.io/Auto-Punch-Report/" style="background:#0f172a;color:#ffffff;padding:10px 18px;border-radius:8px;display:inline-block;font-weight:700;font-size:13px;text-decoration:none;margin:0 6px 6px 0;">Open the Lunch Punch Audit &rarr;</a>' : '') +
+      '</div>' +
       '</div>';
   }
 
@@ -780,10 +876,11 @@ section("&#9888; Needs Attention", "#b91c1c", bad) +
 '<div style="color:#64748b;font-size:11px;margin-top:6px;">Sent automatically from the Blufox Daily Upload</div>' +
 '</td></tr></table></td></tr></table></div></body></html>';
 
+  const actionTotal = openCount + leadCount + punchCount;
   const subject = "Morning Message for " + shortName + " — " +
     surveys.length + " NPS survey" + (surveys.length === 1 ? "" : "s") +
     (bad.length ? " (" + bad.length + " need attention)" : " (all clear)") +
-    (crmLoaded && (openCount + leadCount) ? " • " + (openCount + leadCount) + " action items" : "");
+    ((crmLoaded || punchLoaded) && actionTotal ? " • " + actionTotal + " action items" : "");
 
   return {
     store: shortName, store_full: fullKey,
@@ -791,6 +888,7 @@ section("&#9888; Needs Attention", "#b91c1c", bad) +
     good: good.length, ok: ok.length, bad: bad.length,
     total: surveys.length, tnps: tnps,
     open_orders: openCount, aged_orders: agedCount, follow_ups: leadCount,
+    missed_lunch_punches: punchCount,
     tcharts: (NPS_TCHARTS.byStore || {})[shortName] || 0,
     date: npsDateStr(new Date())
   };
@@ -818,7 +916,8 @@ async function npsSendEmails(surveys, salesStores, dir){
   // never block the NPS email itself.
   await Promise.all([
     npsFetchTSheets().catch(e => console.warn("t-sheets unavailable:", e)),
-    npsFetchCrmActions().catch(e => console.warn("crm actions unavailable:", e))
+    npsFetchCrmActions().catch(e => console.warn("crm actions unavailable:", e)),
+    npsFetchPunches().catch(e => console.warn("punch data unavailable:", e))
   ]);
   const groups = {};
   surveys.forEach(s => { if(s.storeKey){ (groups[s.storeKey] = groups[s.storeKey] || []).push(s); } });
