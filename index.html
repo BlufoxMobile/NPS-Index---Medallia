@@ -259,7 +259,16 @@ let NPS_REPS = [];
 // Compact version of the DM-Visit-Guide "Store Rank" parser (same header regexes).
 // Also parses "Rep Rank" into NPS_REPS as a side effect (same workbook fetch).
 async function npsFetchSalesStores(){
-  const resp = await fetch(NPS_CONFIG.NPS_SALES_REPORT_URL + "?t=" + Date.now(), { cache: "no-store" });
+  // Pin the read to the newest commit of the sales file so we fetch THAT exact
+  // version. A commit-pinned raw URL is immutable and sidesteps GitHub's raw CDN,
+  // which can otherwise keep serving yesterday's copy for a few minutes right after
+  // an upload (the cause of the email showing yesterday's sales numbers).
+  let salesUrl = NPS_CONFIG.NPS_SALES_REPORT_URL;
+  try {
+    const _c = await fetch("https://api.github.com/repos/BlufoxMobile/Daily-Sales-Report/commits?path=data/Sales%20Report.xlsx&per_page=1&_=" + Date.now(), { cache: "no-store", headers: { "Accept": "application/vnd.github+json" } });
+    if(_c.ok){ const _j = await _c.json(); if(_j && _j[0] && _j[0].sha){ salesUrl = "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/" + _j[0].sha + "/data/Sales%20Report.xlsx"; } }
+  } catch(e){ console.warn("Sales SHA lookup failed; falling back to main", e); }
+  const resp = await fetch(salesUrl + "?t=" + Date.now(), { cache: "no-store" });
   if(!resp.ok) throw new Error("Sales report HTTP " + resp.status);
   const wb = XLSX.read(await resp.arrayBuffer(), { type: "array" });
   try { NPS_REPS = npsParseReps(wb); } catch(e){ console.warn("Rep Rank parse failed:", e); }
