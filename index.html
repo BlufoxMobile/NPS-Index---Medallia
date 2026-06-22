@@ -113,6 +113,7 @@
     </span>
   </div>
   <div class="legend">tNPS = % Promoters (9&ndash;10) minus % Detractors (0&ndash;7). Tap any store to open its surveys.</div>
+  <div class="legend" id="scopenote" style="margin-top:-12px;color:#8a7f6f;"></div>
 
   <div id="scorecard"></div>
   <div class="summary" id="summary"></div>
@@ -126,7 +127,7 @@
 const NPS_CONFIG = {
   RESPONSES_URL: "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/nps-responses.json",
   DIRECTORY_URL: "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/store-directory.json",
-  MTD_SCORES_URL: "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/nps-mtd-scores.json",
+  MTD_SCORES_URL: "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/nps-mtd.json",
   NPS_SALES_REPORT_URL: "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/Sales%20Report.xlsx"
 };
 
@@ -154,7 +155,8 @@ const NPS_STORE_NUM = {
   "55000": "Valparaiso",    "51022": "South Knoxville", "51023": "Round Lake Beach",
   "51031": "Johnson City",  "55002": "Tinley Park",     "55011": "Cicero",
   "55001": "Kildeer",       "55003": "Dekalb",          "55008": "Evanston",
-  "51009": "Oak Ridge"
+  "51009": "Oak Ridge",     "51032": "Burbank",         "51033": "Michigan City",
+  "51017": "Hammond",       "51035": "South Bend",      "51041": "Calumet City"
 };
 // Keyword fallbacks for store numbers we haven't seen yet. Checked in order.
 const NPS_STORE_ALIASES = [
@@ -201,7 +203,9 @@ function npsPrettyDate(iso){
   return M[mo-1] + " " + da + ", " + y;
 }
 function npsEsc(s){
-  return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  return String(s == null ? "" : s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }
 // Bucket: 9-10 good (promoter), 8 ok (passive), 0-7 bad (detractor).
 function npsBucket(score){ return score >= 9 ? "good" : score === 8 ? "ok" : "bad"; }
@@ -267,13 +271,30 @@ function npsRepName(ntid){
   }
   return "";
 }
+// "Huerto, Joshua" -> "Joshua Huerto"
+function npsNameFirstLast(name){
+  if(!name) return name;
+  if(name.indexOf(",") < 0) return name;
+  const [last, first] = name.split(",");
+  return (first || "").trim() + " " + (last || "").trim();
+}
 const _repNameCache = {};
 function repDisplay(ntid){
   if(!ntid) return "Unknown";
+  // Prefer the official Express name from the MTD upload when present.
+  if(MTD && MTD.employees && MTD.employees[ntid] && MTD.employees[ntid].name){
+    return npsNameFirstLast(MTD.employees[ntid].name);
+  }
   if(_repNameCache[ntid] !== undefined) return _repNameCache[ntid];
   const n = npsRepName(ntid);
   _repNameCache[ntid] = n || ntid;
   return _repNameCache[ntid];
+}
+// Official Express metrics for a rep (only meaningful on the MTD tab).
+function officialFor(ntid){
+  if(tab !== "mtd" || !MTD || !MTD.employees) return null;
+  const e = MTD.employees[ntid];
+  return (e && e.officialTnps != null) ? e : null;
 }
 
 async function npsFetchReps(){
@@ -347,9 +368,35 @@ function currentSurveys(){
     const ids = new Set(DATA.lastBatchIds || []);
     return (DATA.surveys || []).filter(s => ids.has(s.id));
   }
-  const now = new Date();
-  const monthPrefix = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
-  return (DATA.surveys || []).filter(s => (s.txnDate || "").startsWith(monthPrefix));
+  // MTD: prefer the dedicated month-to-date upload (complete fiscal month, scores
+  // & surveys from one source). Fall back to the daily-accumulated history,
+  // filtered to the same fiscal-month-to-date window.
+  if(MTD && Array.isArray(MTD.surveys) && MTD.surveys.length){
+    return MTD.surveys;
+  }
+  const fw = npsFiscalWindow();
+  return (DATA.surveys || []).filter(s => {
+    const d = s.txnDate || "";
+    return d >= fw.startYMD && d <= fw.endYMD;
+  });
+}
+// Blufox NPS fiscal month = the 22nd through the 21st. "Month to date" is the
+// 22nd of the current fiscal month through today (spans two calendar months).
+function npsFiscalWindow(today){
+  today = today || new Date();
+  let y = today.getFullYear(), m = today.getMonth();  // 0-based month
+  if(today.getDate() < 22){ m -= 1; if(m < 0){ m = 11; y -= 1; } }
+  const start = new Date(y, m, 22);
+  const z = n => String(n).padStart(2,"0");
+  const ymd = d => d.getFullYear() + "-" + z(d.getMonth()+1) + "-" + z(d.getDate());
+  return { start: start, end: today, startYMD: ymd(start), endYMD: ymd(today) };
+}
+// Every survey we might filter on (daily history + MTD upload) — powers the
+// store and employee dropdowns so they stay complete on both tabs.
+function allSurveysForFilters(){
+  const out = (DATA && DATA.surveys) ? DATA.surveys.slice() : [];
+  if(MTD && Array.isArray(MTD.surveys)) out.push(...MTD.surveys);
+  return out;
 }
 
 function npsbadgeHtml(val, label){
@@ -360,104 +407,129 @@ function npsbadgeHtml(val, label){
 
 let lastRenderedKeys = [];
 
+function storeKeyOf(s){ return s.storeKey || ("⚠ Unmatched: " + (s.storeRaw || "?")); }
+function groupBy(list, keyFn){
+  const g = {};
+  list.forEach(s => { const k = keyFn(s); (g[k] = g[k] || []).push(s); });
+  return g;
+}
+
 function render(){
   if(!DATA || !DIR) return;
   const storeF = document.getElementById("storeFilter").value;
   const dmF    = document.getElementById("dmFilter").value;
   const empF   = document.getElementById("empFilter").value;
 
-  // base scope for this tab (used by the employee scorecard, ignores band chips)
   const scope = currentSurveys();
 
-  // ---- employee scorecard (true totals for the selected rep, this tab) ----
+  // scope caption
+  const noteEl = document.getElementById("scopenote");
+  if(tab === "mtd"){
+    if(MTD){
+      const range = (MTD.window && MTD.window.startYMD)
+        ? npsPrettyDate(MTD.window.startYMD) + " – " + npsPrettyDate(MTD.window.endYMD) : "";
+      const scored = MTD.employees ? Object.keys(MTD.employees).filter(k => MTD.employees[k].officialTnps != null).length : 0;
+      noteEl.textContent = "Month to date" +
+        (MTD.period ? " — " + MTD.period + " (Express scores)" : "") +
+        (range ? " · responses " + range : "") +
+        (scored ? " · " + scored + " reps scored from Express" : "");
+    } else {
+      const fw = npsFiscalWindow();
+      noteEl.textContent = "Fiscal month to date (22nd–21st): " +
+        npsPrettyDate(fw.startYMD) + " – " + npsPrettyDate(fw.endYMD) +
+        " · awaiting MTD upload — showing daily history";
+    }
+  } else {
+    noteEl.textContent = "Latest uploaded batch" + (DATA.lastBatchDate ? " · " + npsPrettyDate(DATA.lastBatchDate) : "");
+  }
+
+  // employee scorecard = true totals for the selected rep this tab (ignores chips)
   renderScorecard(empF, scope);
 
-  // ---- apply filters for the listing ----
-  let list = scope.slice();
-  if(storeF) list = list.filter(s => s.storeKey === storeF);
-  if(empF)   list = list.filter(s => (s.ntid || "") === empF);
-  if(dmF)    list = list.filter(s => {
+  // baseList = scope narrowed by store / employee / DM (NOT band chips) — this
+  // drives all the SCORES so a store's tNPS never changes when you toggle a chip.
+  let baseList = scope.slice();
+  if(storeF) baseList = baseList.filter(s => s.storeKey === storeF);
+  if(empF)   baseList = baseList.filter(s => (s.ntid || "") === empF);
+  if(dmF)    baseList = baseList.filter(s => {
     const dm = (DIR.storeDMs || {})[(s.storeKey || "") + " Xfinity Store"] || "";
     return dm.toLowerCase() === dmF.toLowerCase();
   });
-  list = list.filter(s => bands[npsBucket(s.score)]);
+  // displayList = baseList narrowed by band chips — controls which cards show.
+  const displayList = baseList.filter(s => bands[npsBucket(s.score)]);
 
-  // ---- summary cards (match what is shown) ----
-  const good = list.filter(s => npsBucket(s.score) === "good").length;
-  const ok   = list.filter(s => npsBucket(s.score) === "ok").length;
-  const bad  = list.filter(s => npsBucket(s.score) === "bad").length;
-  const withComments = list.filter(s => s.comment).length;
+  // ---- summary scoreboard (full scope, independent of band chips) ----
+  const good = baseList.filter(s => npsBucket(s.score) === "good").length;
+  const ok   = baseList.filter(s => npsBucket(s.score) === "ok").length;
+  const bad  = baseList.filter(s => npsBucket(s.score) === "bad").length;
+  const withComments = baseList.filter(s => s.comment).length;
+  const t = tnps(baseList);
   document.getElementById("summary").innerHTML =
-    sumCard("Surveys", list.length, "") +
-    sumCard("tNPS", (list.length ? (tnps(list) > 0 ? "+" : "") + tnps(list) : "0"), tnps(list) >= 0 ? "good" : "bad") +
+    sumCard("Surveys", baseList.length, "") +
+    sumCard("tNPS", baseList.length ? (t > 0 ? "+" : "") + t : "0", t >= 0 ? "good" : "bad") +
     sumCard("Good (9–10)", good, "good") +
     sumCard("OK (8)", ok, "ok") +
     sumCard("Needs Attn (0–7)", bad, "bad") +
     sumCard("With Comments", withComments, "");
 
-  // ---- group by store, ALPHABETICAL ----
-  const groups = {};
-  list.forEach(s => {
-    const k = s.storeKey || ("⚠ Unmatched: " + (s.storeRaw || "?"));
-    (groups[k] = groups[k] || []).push(s);
-  });
-  const keys = Object.keys(groups).sort((a,b) => a.localeCompare(b));
+  // ---- group by store: scores from baseGroups, cards from displayGroups ----
+  const baseGroups    = groupBy(baseList, storeKeyOf);
+  const displayGroups = groupBy(displayList, storeKeyOf);
+  const keys = Object.keys(displayGroups).sort((a,b) => a.localeCompare(b)); // ALPHABETICAL
   lastRenderedKeys = keys.slice();
 
-  // Force-open when a single store / employee / DM is isolated.
   const forceOpen = !!(storeF || empF || dmF);
 
   const out = keys.map((k, _idx) => {
     const fullKey = k + " Xfinity Store";
     const sm = (DIR.storeManagerNames || {})[fullKey] || "";
     const dm = dmShort((DIR.storeDMs || {})[fullKey] || "");
-    const g  = groups[k];
-    const gd = g.filter(s => npsBucket(s.score) === "good").length;
-    const ok2= g.filter(s => npsBucket(s.score) === "ok").length;
-    const bd = g.filter(s => npsBucket(s.score) === "bad").length;
-    const storeTnps = tnps(g);
+    const baseG = baseGroups[k] || [];
+    const showG = displayGroups[k] || [];
+    const storeTnps = tnps(baseG);
     const isOpen = forceOpen || expanded.has(k);
 
-    // Official MTD NPS from the uploaded Medallia file (MTD tab only, when present)
-    let officialHtml = "";
-    if(tab === "mtd" && MTD && MTD.stores && MTD.stores[k] != null){
-      const o = MTD.stores[k];
-      const ov = (typeof o === "object") ? o.nps : o;
-      if(ov != null && ov !== "" && !isNaN(Number(ov))){
-        officialHtml = '<span class="npsbadge official">Medallia MTD ' + (Number(ov) > 0 ? "+" : "") + Math.round(Number(ov)) + '</span>';
-      }
-    }
-
-    // ---- rep groups inside the store (sorted by employee name) ----
-    const byRep = {};
-    g.forEach(s => { const rk = s.ntid || "Unknown"; (byRep[rk] = byRep[rk] || []).push(s); });
-    const repKeys = Object.keys(byRep).sort((a,b) => repDisplay(a).localeCompare(repDisplay(b)));
+    // rep score lookup (from the full per-store set, not band-filtered)
+    const baseByRep = groupBy(baseG, s => s.ntid || "Unknown");
+    // rep groups that actually have visible cards, sorted by employee name
+    const showByRep = groupBy(showG, s => s.ntid || "Unknown");
+    const repKeys = Object.keys(showByRep).sort((a,b) => repDisplay(a).localeCompare(repDisplay(b)));
     const repHtml = repKeys.map(rk => {
-      const rs = byRep[rk].slice().sort((a,b) => a.score - b.score);
-      const rgd = rs.filter(s => npsBucket(s.score) === "good").length;
-      const rok = rs.filter(s => npsBucket(s.score) === "ok").length;
-      const rbd = rs.filter(s => npsBucket(s.score) === "bad").length;
-      const rt  = tnps(rs);
-      const surveys = rs.map(surveyCard).join("");
+      const rsBase = baseByRep[rk] || [];
+      const rsShow = showByRep[rk].slice().sort((a,b) => a.score - b.score);
+      const rgd = rsBase.filter(s => npsBucket(s.score) === "good").length;
+      const rok = rsBase.filter(s => npsBucket(s.score) === "ok").length;
+      const rbd = rsBase.filter(s => npsBucket(s.score) === "bad").length;
+      const rt  = tnps(rsBase);
+      const surveys = rsShow.map(surveyCard).join("");
       const name = repDisplay(rk);
       const ntidTag = (name !== rk) ? '<span class="rntid">' + npsEsc(rk) + '</span>' : '';
+      const off = officialFor(rk);
+      let rright;
+      if(off){
+        rright = npsbadgeHtml(off.officialTnps, "Official tNPS") +
+          '<span class="rcounts">' + off.records + ' recs (Express)' +
+          (off.issueResolved != null ? ' · ' + off.issueResolved + '% resolved' : '') +
+          ' · ' + rgd + '/' + rok + '/' + rbd + ' here</span>';
+      } else {
+        rright = npsbadgeHtml(rt, "tNPS") +
+          '<span class="rcounts">' + rgd + ' good · ' + rok + ' ok · ' + rbd + ' bad</span>';
+      }
       return '<div class="repgroup"><div class="rephead">' +
         '<span class="rname">' + npsEsc(name) + '</span>' + ntidTag +
-        '<span class="rright">' +
-        npsbadgeHtml(rt, "tNPS") +
-        '<span class="rcounts">' + rgd + ' good · ' + rok + ' ok · ' + rbd + ' bad</span>' +
+        '<span class="rright">' + rright +
         '</span></div><div class="repsurveys">' + surveys + '</div></div>';
     }).join("");
 
+    const scopeTag = tab === "mtd" ? "MTD tNPS" : "tNPS";
     return '<div class="storeblock' + (isOpen ? ' open' : '') + '">' +
       '<div class="storehead" onclick="toggleStoreByIdx(' + _idx + ')">' +
         '<span class="chev">&#9654;</span>' +
         '<h2>' + npsEsc(k) + '</h2>' +
         '<span class="sub">' + (sm ? "SM: " + npsEsc(sm) : "") + (dm ? " · DM: " + npsEsc(dm) : "") + '</span>' +
         '<span class="right">' +
-          officialHtml +
-          npsbadgeHtml(storeTnps, "tNPS") +
-          '<span class="counts">' + g.length + ' survey' + (g.length === 1 ? "" : "s") + '</span>' +
+          npsbadgeHtml(storeTnps, scopeTag) +
+          '<span class="counts">' + baseG.length + ' survey' + (baseG.length === 1 ? "" : "s") + '</span>' +
         '</span>' +
       '</div>' +
       '<div class="storebody">' + repHtml + '</div>' +
@@ -490,6 +562,19 @@ function renderScorecard(empF, scope){
   // stores this rep was surveyed at
   const stores = Array.from(new Set(mine.map(s => s.storeKey).filter(Boolean))).sort();
   const scopeLabel = tab === "yesterday" ? "Latest batch" : "Month to date";
+  const off = officialFor(empF);
+
+  // Headline number = official Express tNPS on the MTD tab when available,
+  // otherwise the tNPS computed from the surveys in view.
+  const headVal = off ? off.officialTnps : t;
+  const headLbl = off ? "Official tNPS · Express" : "tNPS";
+
+  const extraTiles = off
+    ? '<div><div class="mini">' + off.records + '</div><div class="minilbl">Express recs</div></div>' +
+      (off.issueResolved != null ? '<div><div class="mini">' + off.issueResolved + '%</div><div class="minilbl">Issue resolved</div></div>' : '') +
+      (off.waitPct != null ? '<div><div class="mini">' + off.waitPct + '%</div><div class="minilbl">≤10 min wait</div></div>' : '')
+    : '';
+
   host.innerHTML =
     '<div class="scorecard">' +
       '<div style="display:flex;align-items:flex-start;flex-wrap:wrap;gap:10px;">' +
@@ -498,8 +583,9 @@ function renderScorecard(empF, scope){
         '<button class="clear" onclick="clearEmp()">Clear employee ✕</button>' +
       '</div>' +
       '<div class="scrow">' +
-        '<div><div class="big" style="color:' + (t >= 0 ? "#7ed8a0" : "#f49a92") + ';">' + (t > 0 ? "+" : "") + t + '</div><div class="biglbl">tNPS</div></div>' +
-        '<div><div class="mini">' + mine.length + '</div><div class="minilbl">Surveys</div></div>' +
+        '<div><div class="big" style="color:' + (headVal >= 0 ? "#7ed8a0" : "#f49a92") + ';">' + (headVal > 0 ? "+" : "") + headVal + '</div><div class="biglbl">' + headLbl + '</div></div>' +
+        extraTiles +
+        '<div><div class="mini">' + mine.length + '</div><div class="minilbl">Responses' + (off ? " here" : "") + '</div></div>' +
         '<div><div class="mini" style="color:#7ed8a0;">' + gd + '</div><div class="minilbl">Good 9–10</div></div>' +
         '<div><div class="mini" style="color:#f0c46b;">' + ok + '</div><div class="minilbl">OK 8</div></div>' +
         '<div><div class="mini" style="color:#f49a92;">' + bd + '</div><div class="minilbl">Needs Attn 0–7</div></div>' +
@@ -516,10 +602,16 @@ function sumCard(lbl, val, cls){
   return '<div class="sumcard ' + cls + '"><div class="lbl">' + lbl + '</div><div class="val">' + val + '</div></div>';
 }
 
+function buildStoreFilter(){
+  const cur = document.getElementById("storeFilter").value;
+  const stores = Array.from(new Set(allSurveysForFilters().map(s => s.storeKey).filter(Boolean))).sort();
+  document.getElementById("storeFilter").innerHTML = '<option value="">All Stores</option>' +
+    stores.map(s => '<option' + (s === cur ? " selected" : "") + '>' + npsEsc(s) + '</option>').join("");
+}
 function buildEmployeeFilter(){
-  // Distinct employees across ALL surveys, labelled by resolved name (ntid).
+  // Distinct employees across daily history + MTD upload, labelled by name (ntid).
   const seen = {};
-  (DATA.surveys || []).forEach(s => {
+  allSurveysForFilters().forEach(s => {
     const id = s.ntid || "";
     if(!id) return;
     if(!seen[id]) seen[id] = repDisplay(id);
@@ -550,9 +642,7 @@ async function init(){
     DATA = await dataR.json();
 
     // Store filter (alphabetical)
-    const stores = Array.from(new Set((DATA.surveys || []).map(s => s.storeKey).filter(Boolean))).sort();
-    document.getElementById("storeFilter").innerHTML = '<option value="">All Stores</option>' +
-      stores.map(s => '<option>' + npsEsc(s) + '</option>').join("");
+    buildStoreFilter();
     // DM filter
     const dms = Array.from(new Set(Object.values(DIR.storeDMs || {}))).sort();
     document.getElementById("dmFilter").innerHTML = '<option value="">All DMs</option>' +
@@ -564,17 +654,18 @@ async function init(){
     document.getElementById("updatedAt").textContent =
       "Last upload: " + (upd ? upd.toLocaleString() : "unknown") +
       " · Latest batch: " + (DATA.lastBatchIds || []).length + " new surveys (" + (DATA.lastBatchDate || "") + ")";
-    document.getElementById("src").innerHTML = "Read-only view · Source: nps-responses.json · store-directory.json · nps-mtd-scores.json (Daily-Sales-Report repo)";
+    document.getElementById("src").innerHTML = "Read-only view · Source: nps-responses.json · store-directory.json · nps-mtd.json (Daily-Sales-Report repo)";
 
     render();
 
     // Resolve employee names from Rep Rank, then refresh labels + re-render.
     npsFetchReps().then(() => { _clearNameCache(); buildEmployeeFilter(); render(); });
 
-    // Official Medallia MTD NPS (optional — never blocks the page).
+    // Month-to-date NPS upload (optional — never blocks the page). Complete
+    // fiscal-month surveys + scores from one source.
     fetch(NPS_CONFIG.MTD_SCORES_URL + "?t=" + Date.now(), { cache: "no-store" })
       .then(r => r.ok ? r.json() : null)
-      .then(j => { if(j){ MTD = j; render(); } })
+      .then(j => { if(j){ MTD = j; buildStoreFilter(); buildEmployeeFilter(); render(); } })
       .catch(() => {});
   } catch(e){
     document.getElementById("results").innerHTML = '<div class="empty">❌ ' + npsEsc(e.message) + '</div>';
