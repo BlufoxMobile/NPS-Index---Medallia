@@ -253,6 +253,8 @@ const NPS_CONFIG = {
   RESPONSES_PATH: "data/nps-responses.json",
   SENT_LOG_PATH:  "data/nps-sent-log.json",
   RESPONSES_URL: "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/nps-responses.json",
+  MTD_PATH:      "data/nps-mtd.json",
+  MTD_URL:       "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/nps-mtd.json",
   SENT_LOG_URL:  "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/nps-sent-log.json",
   DIRECTORY_URL: "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/store-directory.json",
   NPS_SALES_REPORT_URL: "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/Sales%20Report.xlsx",
@@ -1395,7 +1397,8 @@ async function npsSendEmails(surveys, salesStores, dir){
 
 
 // ===================== DASHBOARD =====================
-let DATA = null, DIR = null;
+let DATA = null, DIR = null, DATA_MTD = null;
+const NPS_FISCAL = {};  // storeKey(lower) -> official Fiscal NPS (manager-pay number from Daily Sales Report)
 let tab = "yesterday";
 const bands = { good: true, ok: true, bad: true };
 
@@ -1437,6 +1440,12 @@ function currentSurveys(){
     const ids = new Set(DATA.lastBatchIds || []);
     return (DATA.surveys || []).filter(s => ids.has(s.id));
   }
+  // Month-to-Date = the FISCAL month-to-date window managers are paid on.
+  // nps-mtd.json is the precomputed Fiscal MTD export (same dataset behind the
+  // Daily Sales Report's "Fiscal NPS"), so store/rep tNPS here matches pay exactly.
+  if(DATA_MTD && Array.isArray(DATA_MTD.surveys)) return DATA_MTD.surveys;
+  // Fallback only if the Fiscal MTD export is unavailable: approximate with
+  // calendar month-to-date over the rolling responses file.
   const now = new Date();
   const monthPrefix = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
   return (DATA.surveys || []).filter(s => (s.txnDate || "").startsWith(monthPrefix));
@@ -1609,7 +1618,13 @@ function storeBlockHtml(storeKey, surveys){
   const n = surveys.filter(s => npsBucket(s.score) === "ok").length;
   const b = surveys.filter(s => npsBucket(s.score) === "bad").length;
   const tnps = npsTnps(surveys);
-  const cls = npsScoreClass(tnps);
+  // On Month-to-Date, show the OFFICIAL Fiscal NPS (the manager-pay number from
+  // the Daily Sales Report). Falls back to survey tNPS if the official value is
+  // missing or on the Yesterday pulse view.
+  const official = (tab === "mtd") ? NPS_FISCAL[String(storeKey).trim().toLowerCase()] : undefined;
+  const headlineNps = (typeof official === "number") ? official : tnps;
+  const cls = npsScoreClass(headlineNps);
+  const npsCap = (typeof official === "number") ? "Fiscal NPS" : "tNPS";
 
   // group this store's surveys by rep (ntid)
   const repGroups = {};
@@ -1640,8 +1655,8 @@ function storeBlockHtml(storeKey, surveys){
         '<span class="mini b">' + b + '</span>' +
       '</div>' +
       '<div class="nps-badge nps-' + cls + '">' +
-        '<div class="num">' + fmtNps(tnps) + '</div>' +
-        '<div class="cap">tNPS</div>' +
+        '<div class="num">' + fmtNps(headlineNps) + '</div>' +
+        '<div class="cap">' + npsCap + '</div>' +
       '</div>' +
     '</button>' +
     '<div class="collapse"><div class="collapse-inner"><div class="reps">' + repsHtml + '</div></div></div>' +
@@ -1690,9 +1705,10 @@ async function resendEmails(){
 
 async function init(){
   try {
-    const [dataR, dirR] = await Promise.all([
+    const [dataR, dirR, mtdR] = await Promise.all([
       fetch(NPS_CONFIG.RESPONSES_URL + "?t=" + Date.now(), { cache: "no-store" }),
-      fetch(NPS_CONFIG.DIRECTORY_URL + "?t=" + Date.now(), { cache: "no-store" })
+      fetch(NPS_CONFIG.DIRECTORY_URL + "?t=" + Date.now(), { cache: "no-store" }),
+      fetch(NPS_CONFIG.MTD_URL + "?t=" + Date.now(), { cache: "no-store" }).catch(() => null)
     ]);
     if(!dirR.ok) throw new Error("store-directory.json HTTP " + dirR.status);
     DIR = await dirR.json();
@@ -1702,11 +1718,29 @@ async function init(){
       return;
     }
     DATA = await dataR.json();
+    try { if(mtdR && mtdR.ok) DATA_MTD = await mtdR.json(); } catch(e){ DATA_MTD = null; }
+    // Official per-store Fiscal NPS — the exact number managers are paid on,
+    // read from the same Sales Report.xlsx the Daily Sales Report displays.
+    try {
+      const salesStores = await npsFetchSalesStores();
+      (salesStores || []).forEach(s => {
+        if(s && s.name && typeof s.nps === "number")
+          NPS_FISCAL[String(s.name).trim().toLowerCase()] = Math.round(s.nps * 100);
+      });
+    } catch(e){ console.warn("Fiscal NPS unavailable:", e); }
 
     // filters
-    const stores = Array.from(new Set((DATA.surveys || []).map(s => s.storeKey).filter(Boolean))).sort();
+    const mtdSurv = (DATA_MTD && DATA_MTD.surveys) || [];
+    const stores = Array.from(new Set([...(DATA.surveys || []), ...mtdSurv].map(s => s.storeKey).filter(Boolean))).sort();
     document.getElementById("storeFilter").innerHTML = '<option value="">All Stores</option>' +
       stores.map(s => '<option>' + npsEsc(s) + '</option>').join("");
+    // Tripwire: if the official Fiscal NPS map loaded but a store has no match
+    // (e.g. a future name change on one side), flag it so the badge silently
+    // falling back to survey tNPS doesn't go unnoticed.
+    if(Object.keys(NPS_FISCAL).length){
+      const missing = stores.filter(s => !(String(s).trim().toLowerCase() in NPS_FISCAL));
+      if(missing.length) console.warn("No official Fiscal NPS for: " + missing.join(", ") + " — badge will use survey tNPS.");
+    }
     const dms = Array.from(new Set(Object.values(DIR.storeDMs || {}))).sort();
     document.getElementById("dmFilter").innerHTML = '<option value="">All DMs</option>' +
       dms.map(d => '<option value="' + npsEsc(d) + '">' + npsEsc(dmShort(d)) + '</option>').join("");
@@ -1715,7 +1749,7 @@ async function init(){
     document.getElementById("updatedAt").textContent =
       "Last upload: " + (upd ? upd.toLocaleString() : "unknown") +
       " • Batch of " + (DATA.lastBatchIds || []).length + " new surveys (" + (DATA.lastBatchDate || "") + ")";
-    document.getElementById("src").textContent = "Source: nps-responses.json • store-directory.json • Daily-Sales-Report repo";
+    document.getElementById("src").textContent = "Source: nps-responses.json (Yesterday) • nps-mtd.json (Fiscal Month-to-Date) • store-directory.json • Daily-Sales-Report repo";
     if((DATA.unmatched || []).length){
       banner("⚠ Unmatched store IDs in last upload: " + DATA.unmatched.map(npsEsc).join("; ") +
         " — add them to NPS_STORE_NUM / NPS_STORE_ALIASES.", "error");
