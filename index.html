@@ -980,7 +980,9 @@ async function npsFetchConversion(){
    the "🎯 TODAY'S TARGETS" panel used by the morning-briefing email and the
    NPS Index per-store dashboard cards. */
 /* ============================================================
-   BLUFOX SMART GOAL ENGINE  v1.0  (shared module)
+   BLUFOX SMART GOAL ENGINE  v1.1  (shared module)
+   v1.1: volume-aware attachGoal for Gig/Plus (replaces "N in a row"),
+         video-per-internet rule, mixGoal locked to Jeff's NPS Calculator.
    Embed this block VERBATIM in:
      - Daily-Goals-Sheet/index.html
      - One-On-One-Form/index.html
@@ -1087,10 +1089,11 @@ var BFX = (function(){
              gapToPace: Math.max(0, paceMTD-mtd) };
   }
 
-  /* ---- Mix goal (NPS, Gig %, Plus %): how many more "good" outcomes
-     in a row to reach the goal share. n = ceil((g*base - num)/(1-g)).
-     NPS: num = promoters - detractors, base = total surveys, g = 0.80.
-     Gig: num = gig sales, base = internet sales. Plus: plus lines / mobile lines. */
+  /* ---- Mix goal (NPS): how many more "good" outcomes in a row to reach
+     the goal share. n = ceil((g*base - num)/(1-g)).
+     Matches Jeff's NPS Calculator 2025.xlsx exactly:
+       =MAX(0, CEILING((Surveys*Desired - Surveys*Current)/(1-Desired), 1))
+     NPS: num = promoters - detractors, base = total surveys, g = 0.80. */
   function mixGoal(o){
     var g = (o.goalPct||0)/100, num = o.num||0, base = o.base||0;
     var cur = base>0 ? (num/base)*100 : null;
@@ -1098,6 +1101,43 @@ var BFX = (function(){
     if(cur >= o.goalPct) return { cur:cur, needed:0, status:'hit', goalPct:o.goalPct };
     var needed = g>=1 ? Infinity : Math.max(1, ceil((g*base - num)/(1-g)));
     return { cur:cur, needed:needed, status:'behind', goalPct:o.goalPct };
+  }
+
+  /* ---- Attach goal (Gig %, Plus %, video-on-internet) — VOLUME-AWARE.
+     The old "next N in a row" math dragged the whole month's history along
+     (e.g. "139 Gig in a row"), which is not actionable. Instead:
+       expRem  = internets/mobiles you'll realistically sell in the rest of
+                 the month, from your own pace: ceil((base/el) * rem)
+       needed  = Gig sales required AMONG those to finish the month at goal:
+                 ceil(g*(base+expRem) - num)
+     If needed > expRem the goal is mathematically out of reach this month:
+       status 'all-in' -> sell goal-product on EVERY remaining sale and
+       report bestPct (the % you'd finish at), fresh start next month.
+     in: { goalPct, num, base, per (calendarPeriod or fiscalPeriod) }
+     out: { cur, expRem, needed, perDay, share(%), bestPct, status } */
+  function attachGoal(o){
+    var g = (o.goalPct||0)/100, num = o.num||0, base = o.base||0, p = o.per;
+    var cur = base>0 ? (num/base)*100 : null;
+    if(cur===null) return { cur:null, status:'no-data', goalPct:o.goalPct };
+    if(cur >= o.goalPct){
+      // already at goal: hold it — goal-share of each remaining sale
+      var expR0 = ceil((base/p.el)*p.rem);
+      return { cur:cur, expRem:expR0, needed:ceil(g*expR0), perDay:0,
+               share:o.goalPct, bestPct:cur, status:'hit', goalPct:o.goalPct };
+    }
+    var expRem = ceil((base/Math.max(1,p.el)) * p.rem);        // own-pace projection
+    if(expRem<=0) return { cur:cur, expRem:0, needed:0, perDay:0, share:null,
+                           bestPct:cur, status:'no-volume', goalPct:o.goalPct };
+    var needed = Math.max(1, ceil(g*(base+expRem) - num));
+    if(needed >= expRem){
+      var bestPct = ((num+expRem)/(base+expRem))*100;          // all-Gig finish
+      return { cur:cur, expRem:expRem, needed:expRem, perDay:null,
+               share:100, bestPct:bestPct, status:'all-in', goalPct:o.goalPct };
+    }
+    return { cur:cur, expRem:expRem, needed:needed,
+             perDay: needed/p.rem,                              // may be <1 — round in UI
+             share: (needed/expRem)*100,
+             bestPct:o.goalPct, status:'behind', goalPct:o.goalPct };
   }
 
   /* ---- Full store computation ----
@@ -1131,13 +1171,22 @@ var BFX = (function(){
 
     if(s.npsTotal!=null) out.nps  = mixGoal({ goalPct:STD.NPS_GOAL,
       num:(s.npsProm||0)-(s.npsDet||0), base:s.npsTotal });
-    if(s.gigBase!=null)  out.gig  = mixGoal({ goalPct:STD.GIG_GOAL,  num:s.gigNum,  base:s.gigBase });
-    if(s.plusBase!=null) out.plus = mixGoal({ goalPct:STD.PLUS_GOAL, num:s.plusNum, base:s.plusBase });
+    // Gig / Plus: volume-aware attach goals (report MTD counts are calendar-month)
+    if(s.gigBase!=null)  out.gig  = attachGoal({ goalPct:STD.GIG_GOAL,  num:s.gigNum,  base:s.gigBase,  per:cp });
+    if(s.plusBase!=null) out.plus = attachGoal({ goalPct:STD.PLUS_GOAL, num:s.plusNum, base:s.plusBase, per:cp });
+    // Video / non-traditional: standard is video WITH EVERY internet sale.
+    // Daily video goal = today's internet (RGU) goal; monthly need = internets without video.
+    if(s.videoMTD!=null && s.intMTD!=null){
+      out.video = { attachCur: s.intMTD>0 ? (s.videoMTD/s.intMTD)*100 : null,
+                    missed: Math.max(0, (s.intMTD||0)-(s.videoMTD||0)),
+                    daily: rgu.daily, rule:'video with every internet sale' };
+    }
     return out;
   }
 
   return { STD:STD, fiscalPeriod:fiscalPeriod, calendarPeriod:calendarPeriod,
-           rateGoal:rateGoal, amountGoal:amountGoal, mixGoal:mixGoal, storeGoals:storeGoals };
+           rateGoal:rateGoal, amountGoal:amountGoal, mixGoal:mixGoal,
+           attachGoal:attachGoal, storeGoals:storeGoals };
 })();
 if (typeof module!=='undefined' && module.exports) module.exports = BFX;
 /* ============================================================ END BFX ENGINE */
@@ -1275,7 +1324,7 @@ function npsDailyGoalHtml(shortName, rowMaybe){
       npsCtx = "at or above " + g.nps.goalPct + " &#10003; keep it up";
       npsModeStr = "hit";
     } else {
-      npsCtx = "<b>" + g.nps.needed + "</b> more 9&ndash;10 survey" + (g.nps.needed === 1 ? "" : "s") + " to reach " + g.nps.goalPct;
+      npsCtx = "<b>" + g.nps.needed + "</b> more 9&ndash;10 survey" + (g.nps.needed === 1 ? "" : "s") + " &rarr; " + g.nps.goalPct; /* BFX v1.1 */
       npsModeStr = "behind";
     }
   } else if(g.nps && g.nps.status === "no-data"){
@@ -1847,7 +1896,8 @@ function render(){
     sumCard("Neutral", ok, "k-neutral", "score of 8") +
     sumCard("Needs Attn", bad, "k-bad", "0–7 detractors") +
     sumCard("tNPS", fmtNps(tnps), "k-nps", "promoters − detractors") +
-    sumCard("With Comments", withComments, "", cmtPct + "% of surveys");
+    sumCard("With Comments", withComments, "", cmtPct + "% of surveys") +
+    bfxToGoalSummaryCard(storeF, dmF); /* BFX v1.1: MTD 9\u201310s-to-80 card */
 
   // group by store
   const groups = {};
@@ -2018,6 +2068,7 @@ function storeBlockHtml(storeKey, surveys){
       '<div class="store-id">' +
         '<div class="name">' + npsEsc(storeKey) + '</div>' +
         '<div class="meta">' + metaBits.join(" · ") + '</div>' +
+        bfxStoreGoalLineHtml(storeKey) + /* BFX v1.1: MTD surveys-to-80 pill */
       '</div>' +
       '<div class="minis">' +
         '<span class="mini g">' + g + '</span>' +
@@ -2042,6 +2093,50 @@ function bfxDashTargetsHtml(storeKey){
   try { inner = npsDailyGoalHtml(storeKey); } catch(e){ console.warn("targets panel:", e); }
   if(!inner) return "";
   return '<div style="background:#0f2350;background:linear-gradient(135deg,#0f2350 0%,#1e3a8a 60%,#2b4ba0 100%);border-radius:14px;padding:2px 12px 12px;margin:0 0 14px;">' + inner + '</div>';
+}
+
+/* BFX v1.1: per-store MTD surveys-to-goal line — Jeff's headline ask. Reads the
+   fiscal-MTD Medallia buckets (BFX_NPSMTD: score>=9 promoter, 8 passive, <=7
+   detractor) and asks BFX.mixGoal — the exact math in Jeff's NPS Calculator
+   2025.xlsx — how many more 9–10 surveys reach the 80 goal. Rendered as a
+   pill on every store card head. */
+function bfxStoreGoalLineHtml(storeKey){
+  if(String(storeKey).indexOf("Unmatched") >= 0) return "";
+  const m = (BFX_NPSMTD.byStore || {})[String(storeKey).trim().toLowerCase()];
+  let bg = "#f8fafc", bd = "#c4cdda", fg = "#64748b", txt;
+  if(!m || !m.total){
+    txt = "no surveys yet this month";
+  } else {
+    const g = BFX.mixGoal({ goalPct: BFX.STD.NPS_GOAL, num: (m.prom || 0) - (m.det || 0), base: m.total });
+    if(g.status === "hit"){
+      bg = "#ecfdf5"; bd = "#6ee7b7"; fg = "#047857";
+      txt = "\u2713 at goal \u2014 every survey counts, " + m.total + " survey" + (m.total === 1 ? "" : "s") + " MTD";
+    } else {
+      bg = "#fffbeb"; bd = "#fcd34d"; fg = "#b45309";
+      txt = "MTD: " + m.total + " survey" + (m.total === 1 ? "" : "s") + " \u00b7 NPS " + Math.round(g.cur) +
+            " \u00b7 needs <b>" + g.needed + "</b> more 9\u201310s to hit " + g.goalPct;
+    }
+  }
+  return '<div style="display:inline-block;margin-top:5px;padding:3px 9px;background:' + bg + ';border:1px solid ' + bd + ';border-radius:999px;font-size:11.5px;font-weight:600;color:' + fg + ';">' + txt + '</div>';
+}
+
+/* BFX v1.1: summary-strip card — same surveys-to-goal math over whatever
+   store/DM filter is active, straight from the fiscal-MTD survey export. */
+function bfxToGoalSummaryCard(storeF, dmF){
+  const surv = (DATA_MTD && Array.isArray(DATA_MTD.surveys)) ? DATA_MTD.surveys : null;
+  if(!surv) return "";
+  let list = surv;
+  if(storeF) list = list.filter(s => s.storeKey === storeF);
+  if(dmF) list = list.filter(s => {
+    const dm = (DIR.storeDMs || {})[(s.storeKey || "") + " Xfinity Store"] || "";
+    return dm.toLowerCase() === dmF.toLowerCase();
+  });
+  if(!list.length) return sumCard("9\u201310s to 80", "\u2014", "", "no surveys yet this month");
+  let g = 0, b = 0;
+  list.forEach(s => { const k = npsBucket(s.score); if(k === "good") g++; else if(k === "bad") b++; });
+  const mix = BFX.mixGoal({ goalPct: BFX.STD.NPS_GOAL, num: g - b, base: list.length });
+  if(mix.status === "hit") return sumCard("9\u201310s to 80", "\u2713", "k-good", "at goal \u2014 every survey counts (" + list.length + " MTD)");
+  return sumCard("9\u201310s to 80", String(mix.needed), "k-bad", "more promoters needed \u00b7 " + list.length + " surveys MTD");
 }
 
 /* ===================== ACCORDION INTERACTION (all three levels) ===================== */
