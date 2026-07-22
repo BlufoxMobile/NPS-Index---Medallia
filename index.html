@@ -2001,12 +2001,29 @@ function bucketBlockHtml(cls, label, surveys){
   '</div>';
 }
 
+// Rep's official Column D "SMS tNPS" from the morning Express Report. The upload
+// stores it in nps-mtd.json -> employees[ntid].officialTnps. This is the score
+// Jeff wants shown next to every rep (NOT the survey-computed tNPS, which can
+// differ). Returns null when the rep isn't in the Express Report yet, so callers
+// can fall back to the survey tNPS and never render a blank.
+function npsColumnD(ntid){
+  if(!ntid || !DATA_MTD || !DATA_MTD.employees) return null;
+  const e = DATA_MTD.employees[ntid];
+  const v = e && e.officialTnps;
+  return (typeof v === "number") ? v : null;
+}
+
 function repBlockHtml(ntid, storeKey, surveys){
   const g = surveys.filter(s => npsBucket(s.score) === "good");
   const n = surveys.filter(s => npsBucket(s.score) === "ok");
   const b = surveys.filter(s => npsBucket(s.score) === "bad");
-  const tnps = npsTnps(surveys);
+  const surveyTnps = npsTnps(surveys);
+  // Headline = the rep's Column D SMS tNPS from the Express Report; only fall
+  // back to the survey-computed tNPS when Column D isn't available for this rep.
+  const colD = npsColumnD(ntid);
+  const tnps = (colD !== null) ? colD : surveyTnps;
   const cls = npsScoreClass(tnps);
+  const heroCap = (colD !== null) ? "NPS" : "tNPS";
   const who = npsRepDisplay(ntid, storeKey);
   return '<div class="rep">' +
     '<button class="rep-head" aria-expanded="false" onclick="npsToggle(this)">' +
@@ -2023,7 +2040,7 @@ function repBlockHtml(ntid, storeKey, surveys){
       '</div>' +
       '<div class="rep-hero hero-' + cls + '">' +
         '<div class="num">' + fmtNps(tnps) + '</div>' +
-        '<div class="cap">tNPS</div>' +
+        '<div class="cap">' + heroCap + '</div>' +
       '</div>' +
     '</button>' +
     '<div class="collapse"><div class="collapse-inner"><div class="buckets">' +
@@ -2042,13 +2059,14 @@ function storeBlockHtml(storeKey, surveys){
   const n = surveys.filter(s => npsBucket(s.score) === "ok").length;
   const b = surveys.filter(s => npsBucket(s.score) === "bad").length;
   const tnps = npsTnps(surveys);
-  // On Month-to-Date, show the OFFICIAL Fiscal NPS (the manager-pay number from
-  // the Daily Sales Report). Falls back to survey tNPS if the official value is
-  // missing or on the Yesterday pulse view.
-  const official = (tab === "mtd") ? NPS_FISCAL[String(storeKey).trim().toLowerCase()] : undefined;
+  // Store headline = the OFFICIAL store NPS pulled from the Daily Sales Report
+  // (NPS_FISCAL) whenever it's available, on both the Yesterday and Month-to-Date
+  // views so the store always reflects its real Sales-Report NPS. Only falls back
+  // to the survey-computed tNPS when no official number exists for the store yet.
+  const official = NPS_FISCAL[String(storeKey).trim().toLowerCase()];
   const headlineNps = (typeof official === "number") ? official : tnps;
   const cls = npsScoreClass(headlineNps);
-  const npsCap = (typeof official === "number") ? "Fiscal NPS" : "tNPS";
+  const npsCap = "NPS";
 
   // group this store's surveys by rep (ntid)
   const repGroups = {};
@@ -2092,6 +2110,11 @@ function storeBlockHtml(storeKey, surveys){
    exact same computation + renderer the email uses, wrapped in the header's
    dark navy so the inner tiles read correctly on the light page. */
 function bfxDashTargetsHtml(storeKey){
+  // BFX: the daily & monthly TARGET panel is hidden on the NPS dashboard per
+  // Jeff's request — this page should show NPS scores only. The engine and
+  // renderer below are kept intact (the morning-briefing email still uses them);
+  // we simply return nothing so no target panel is drawn on the store cards.
+  return "";
   if(String(storeKey).indexOf("Unmatched") >= 0) return "";
   let inner = "";
   try { inner = npsDailyGoalHtml(storeKey); } catch(e){ console.warn("targets panel:", e); }
