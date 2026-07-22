@@ -1937,7 +1937,7 @@ function npsTnps(surveys){
   return Math.round(((g - b) / surveys.length) * 100);
 }
 function npsScoreClass(v){ return v >= 30 ? "pos" : v >= 0 ? "mid" : "neg"; }
-function fmtNps(v){ return (v > 0 ? "+" : "") + v; }
+function fmtNps(v){ return v + "%"; }  // NPS scores render as percentages (e.g. 15%) per Jeff — no +/- sign prefix on positives.
 function bucketChip(k){ return k === "good" ? "g" : k === "ok" ? "n" : "b"; }
 function npsTitleWord(w){ return w ? w.charAt(0).toUpperCase() + w.slice(1) : ""; }
 
