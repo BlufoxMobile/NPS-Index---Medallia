@@ -299,13 +299,18 @@ const NPS_STORE_NUM = {
   "55000": "Valparaiso",    "51022": "South Knoxville", "51023": "Round Lake Beach",
   "51031": "Johnson City",  "55002": "Tinley Park",     "55011": "Cicero",
   "55001": "Kildeer",       "55003": "Dekalb",          "55008": "Evanston",
-  "51009": "Oak Ridge",     "51038": "Machesney Park",  "51039": "Oak Lawn"
+  "51009": "Oak Ridge",     "51038": "Machesney Park",  "51039": "Oak Lawn",
+  "51045": "North Knoxville"
   // Oak Lawn = 51039 (added Jul 31 2026; store opens Aug 5, 2026).
-  // NPS_STORE_ALIASES also matches "oak lawn" by name as a fallback.
+  // North Knoxville = 51045 (Big South, DM Brooks).
+  // NPS_STORE_ALIASES also matches "oak lawn" / "north knoxville" by name as a fallback.
 };
 
 // Keyword fallbacks for store numbers we haven't seen yet. Checked in order.
 const NPS_STORE_ALIASES = [
+  // North Knoxville MUST stay above South Knoxville — South Knoxville keeps a
+  // bare "knoxville" catch-all that would otherwise swallow it.
+  ["North Knoxville", ["n. knoxville", "n knoxville", "north knoxville"]],
   ["South Knoxville", ["s. knoxville", "s knoxville", "south knoxville", "knoxville"]],
   ["Machesney Park",  ["machesney park", "machesney"]],
   ["Oak Lawn",        ["oak lawn"]],
@@ -1852,6 +1857,9 @@ function dmShort(email){
     "jcabrales@blufoxmobile.com": "J. Cabrales",
     "idhorajiwala@blufoxmobile.com": "I. Dhorajiwala",
     "mbrooks@blufoxmobile.com": "M. Brooks",
+    // Chicago West DM. Address follows the house pattern but is UNCONFIRMED —
+    // if it differs, the split("@") fallback below still renders something sane.
+    "tchowdhury@blufoxmobile.com": "T. Chowdhury",
     "jbilbrey@blufoxmobile.com": "Jeff Bilbrey"
   };
   return map[email.toLowerCase()] || email.split("@")[0];
