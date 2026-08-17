@@ -299,8 +299,9 @@ const NPS_STORE_NUM = {
   "55000": "Valparaiso",    "51022": "South Knoxville", "51023": "Round Lake Beach",
   "51031": "Johnson City",  "55002": "Tinley Park",     "55011": "Cicero",
   "55001": "Kildeer",       "55003": "Dekalb",          "55008": "Evanston",
-  "51009": "Oak Ridge",     "51038": "Machesney Park",  "51039": "Oak Lawn",
-  "51045": "North Knoxville"
+  "51009": "Oak Ridge",     "51032": "Burbank",         "51033": "Michigan City",
+  "51017": "Hammond",       "51035": "South Bend",      "51041": "Calumet City",
+  "51038": "Machesney Park","51039": "Oak Lawn",        "51045": "North Knoxville"
   // Oak Lawn = 51039 (added Jul 31 2026; store opens Aug 5, 2026).
   // North Knoxville = 51045 (Big South, DM Brooks).
   // NPS_STORE_ALIASES also matches "oak lawn" / "north knoxville" by name as a fallback.
@@ -348,6 +349,17 @@ function npsMapStore(raw){
     if(keys.some(k => s.includes(k))) return name;
   }
   return null;
+}
+
+// Resolve a stored survey's store on READ. Records written by an older deploy
+// can carry storeKey:null for stores the mapper didn't know yet (they are only
+// re-mapped when they arrive in a fresh workbook), so fall back to re-mapping
+// storeRaw with the current tables. Returns null when genuinely unmappable, so
+// callers still route those surveys to the "Unmatched" group.
+function npsSurveyStore(s){
+  if(!s) return null;
+  if(s.storeKey) return s.storeKey;
+  return npsMapStore(s.storeRaw);
 }
 
 function npsDateStr(v){
@@ -1214,8 +1226,9 @@ let BFX_NPSMTD = { byStore: {}, loaded: false };
 function bfxIngestNpsMtd(surveys){
   const by = {};
   (surveys || []).forEach(s => {
-    if(!s || !s.storeKey || s.score == null) return;
-    const k = String(s.storeKey).trim().toLowerCase();
+    const sk = npsSurveyStore(s);
+    if(!s || !sk || s.score == null) return;
+    const k = String(sk).trim().toLowerCase();
     const rec = by[k] = by[k] || { prom: 0, det: 0, total: 0 };
     const b = npsBucket(Number(s.score));
     if(b === "good") rec.prom++; else if(b === "bad") rec.det++;
@@ -1527,7 +1540,7 @@ function buildNpsPayload(shortName, surveys, salesStores, dir){
   const dmEmail  = (dir.storeDMs || {})[fullKey] || "";
   const smName   = (dir.storeManagerNames || {})[fullKey] || "";
 
-  const repEmails = (dir.storeEmployees || {})[fullKey] || [];
+  const repEmails = ((dir.storeEmployees || {})[fullKey] || []).map(e => (e && typeof e === 'object') ? (e.email || '') : e).filter(Boolean);
   const to = smEmail || asmEmail || dmEmail || (repEmails[0] || "") || NPS_CONFIG.MY_EMAIL;
   const seen = new Set([to.toLowerCase()]);
   const cc = [asmEmail, dmEmail, ...repEmails, NPS_CONFIG.MY_EMAIL].filter(e => {
@@ -1806,7 +1819,7 @@ async function npsSendEmails(surveys, salesStores, dir){
     return { sent: 0, storeCount: 0, errors: [], skipped: true, stale: _stale };
   }
   const groups = {};
-  surveys.forEach(s => { if(s.storeKey){ (groups[s.storeKey] = groups[s.storeKey] || []).push(s); } });
+  surveys.forEach(s => { const sk = npsSurveyStore(s); if(sk){ (groups[sk] = groups[sk] || []).push(s); } });
   // Email EVERY store in the RSD roster, not just stores that had surveys.
   const storeNames = new Set();
   (salesStores || []).forEach(s => { if(s && s.name) storeNames.add(String(s.name).trim()); });
@@ -1888,9 +1901,9 @@ function render(){
   const dmF = document.getElementById("dmFilter").value;
 
   let list = currentSurveys();
-  if(storeF) list = list.filter(s => s.storeKey === storeF);
+  if(storeF) list = list.filter(s => npsSurveyStore(s) === storeF);
   if(dmF) list = list.filter(s => {
-    const dm = (DIR.storeDMs || {})[(s.storeKey || "") + " Xfinity Store"] || "";
+    const dm = (DIR.storeDMs || {})[(npsSurveyStore(s) || "") + " Xfinity Store"] || "";
     return dm.toLowerCase() === dmF.toLowerCase();
   });
   list = list.filter(s => bands[npsBucket(s.score)]);
@@ -1914,7 +1927,7 @@ function render(){
   // group by store
   const groups = {};
   list.forEach(s => {
-    const k = s.storeKey || ("⚠ Unmatched: " + s.storeRaw);
+    const k = npsSurveyStore(s) || ("⚠ Unmatched: " + s.storeRaw);
     (groups[k] = groups[k] || []).push(s);
   });
   const keys = Object.keys(groups).sort((a,b) => {
@@ -1962,15 +1975,28 @@ function npsRepDisplay(ntid, storeKey){
   const ini = m[1], lastFrag = m[2];
   let last = lastFrag;
   const emails = (DIR && DIR.storeEmployees && DIR.storeEmployees[(storeKey || "") + " Xfinity Store"]) || [];
-  let best = "";
+  // storeEmployees entries are {first,last,email} objects (older data may hold
+  // plain email strings). Prefer the directory's real first/last name; fall
+  // back to the email local-part.
+  let best = "", bestFull = "";
   emails.forEach(e => {
-    const lp = String(e).split("@")[0].toLowerCase().replace(/[^a-z]/g, "");
+    const obj   = (e && typeof e === "object") ? e : null;
+    const first = obj ? String(obj.first || "") : "";
+    const lastN = obj ? String(obj.last  || "") : "";
+    const mail  = String((obj ? obj.email : e) || "");
+    const dl    = lastN.toLowerCase().replace(/[^a-z]/g, "");
+    if(!bestFull && dl && first.charAt(0).toLowerCase() === ini &&
+       (dl.indexOf(lastFrag) === 0 || lastFrag.indexOf(dl) === 0)){
+      bestFull = first + " " + lastN;
+    }
+    const lp = mail.split("@")[0].toLowerCase().replace(/[^a-z]/g, "");
     if(!lp || lp.charAt(0) !== ini) return;
     const lpLast = lp.slice(1);
     if(lpLast.indexOf(lastFrag) === 0 || lastFrag.indexOf(lpLast) === 0){
       if(lpLast.length > best.length) best = lpLast;
     }
   });
+  if(bestFull) return { name: bestFull, ntid: ntid };
   if(best) last = best;
   return { name: ini.toUpperCase() + ". " + npsTitleWord(last), ntid: ntid };
 }
@@ -2161,9 +2187,9 @@ function bfxToGoalSummaryCard(storeF, dmF){
   const surv = (DATA_MTD && Array.isArray(DATA_MTD.surveys)) ? DATA_MTD.surveys : null;
   if(!surv) return "";
   let list = surv;
-  if(storeF) list = list.filter(s => s.storeKey === storeF);
+  if(storeF) list = list.filter(s => npsSurveyStore(s) === storeF);
   if(dmF) list = list.filter(s => {
-    const dm = (DIR.storeDMs || {})[(s.storeKey || "") + " Xfinity Store"] || "";
+    const dm = (DIR.storeDMs || {})[(npsSurveyStore(s) || "") + " Xfinity Store"] || "";
     return dm.toLowerCase() === dmF.toLowerCase();
   });
   if(!list.length) return sumCard("9\u201310s to 80", "\u2014", "", "no surveys yet this month");
@@ -2197,7 +2223,7 @@ async function resendEmails(){
   if(!npsHookReady()){ banner("Zapier webhook URL not configured in this file.", "error"); return; }
   const list = (function(){
     const ids = new Set(DATA.lastBatchIds || []);
-    return (DATA.surveys || []).filter(s => ids.has(s.id) && s.storeKey);
+    return (DATA.surveys || []).filter(s => ids.has(s.id) && npsSurveyStore(s));
   })();
   if(!list.length){ banner("Nothing in the last batch to send.", "error"); return; }
   if(!confirm("Re-send digest emails for " + list.length + " surveys? SMs and DMs will receive duplicates of today's email.")) return;
@@ -2249,7 +2275,7 @@ async function init(){
 
     // filters
     const mtdSurv = (DATA_MTD && DATA_MTD.surveys) || [];
-    const stores = Array.from(new Set([...(DATA.surveys || []), ...mtdSurv].map(s => s.storeKey).filter(Boolean))).sort();
+    const stores = Array.from(new Set([...(DATA.surveys || []), ...mtdSurv].map(s => npsSurveyStore(s)).filter(Boolean))).sort();
     document.getElementById("storeFilter").innerHTML = '<option value="">All Stores</option>' +
       stores.map(s => '<option>' + npsEsc(s) + '</option>').join("");
     // Tripwire: if the official Fiscal NPS map loaded but a store has no match
