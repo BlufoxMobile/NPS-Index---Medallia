@@ -3,248 +3,750 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Blufox NPS Report</title>
+<title>The NPS Index &middot; Blufox Mobile</title>
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#05070a">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
-  /* ===== DESIGN TOKENS ===== */
-  :root{
-    --navy:#1e3a8a; --navy-deep:#0f172a; --orange:#f97316; --orange-deep:#ea580c;
-    --good:#047857; --good-light:#10b981; --good-bg:#ecfdf5; --good-border:#a7f3d0;
-    --neutral:#b45309; --neutral-light:#f59e0b; --neutral-bg:#fffbeb; --neutral-border:#fde68a;
-    --bad:#b91c1c; --bad-light:#ef4444; --bad-bg:#fef2f2; --bad-border:#fecaca;
-    --app-bg:#f1f5f9; --card:#ffffff; --ink:#0f172a; --ink-soft:#475569; --ink-faint:#94a3b8;
-    --line:#e2e8f0; --line-soft:#eef2f6;
-    --r-sm:8px; --r-md:12px; --r-lg:16px; --r-xl:22px;
-    --shadow-sm:0 1px 2px rgba(15,23,42,.06), 0 1px 3px rgba(15,23,42,.04);
-    --shadow-md:0 4px 12px rgba(15,23,42,.07), 0 2px 4px rgba(15,23,42,.04);
-    --shadow-lg:0 12px 32px rgba(15,23,42,.12);
-    --ease:cubic-bezier(.4,0,.2,1);
-    --font:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-  }
-  *{ box-sizing:border-box; }
-  html,body{ margin:0; padding:0; }
-  body{ font-family:var(--font); background:var(--app-bg); color:var(--ink); -webkit-font-smoothing:antialiased; line-height:1.45; }
-  button{ font-family:inherit; cursor:pointer; }
-  :focus-visible{ outline:3px solid rgba(30,58,138,.45); outline-offset:2px; border-radius:6px; }
-  .wrap{ max-width:1100px; margin:0 auto; padding:0 16px 64px; }
+/* ============================================================================
+   NPS INDEX — visual system
+   Shares the Cook County Cooks language: near-black ground, brass hairlines,
+   Bodoni Moda display over Archivo text. Tokens below are lifted from
+   cookcountycooks.com/assets/theme.css so the two pages read as one building.
+   Signal colours reuse the site's own LCD / amber / alert, not stock chart RGB.
+   ========================================================================= */
+@import url('https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,300..700;1,62..125,300..700&family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..700&display=swap');
 
-  /* ===== HEADER BAR ===== */
-  .appbar{ background:linear-gradient(135deg, var(--navy-deep) 0%, var(--navy) 70%); color:#fff; padding:18px 0 22px; box-shadow:var(--shadow-md); position:sticky; top:0; z-index:20; }
-  .appbar .wrap{ padding-bottom:0; }
-  .appbar-row{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
-  .logo{ width:38px;height:38px;border-radius:10px;flex:none; background:linear-gradient(135deg,var(--orange),var(--orange-deep)); display:grid;place-items:center;font-weight:800;color:#fff;font-size:18px; box-shadow:0 2px 8px rgba(234,88,12,.45); }
-  .titles h1{ font-size:19px; margin:0; letter-spacing:-.2px; font-weight:700; }
-  .titles p{ margin:2px 0 0; font-size:12.5px; color:#c7d2fe; }
-  .appbar-spacer{ flex:1 1 auto; }
-  .updated{ font-size:12px; color:#c7d2fe; text-align:right; }
-  .updated strong{ color:#fff; font-weight:600; }
+:root{
+  /* --- ground ------------------------------------------------------------ */
+  --ink-950:#05070a; --ink-900:#090d13; --ink-850:#0d131b; --ink-800:#131a24;
+  --ink-700:#1b2430; --ink-600:#26313f; --steel:#3a4653;
+  --walnut:#4b3526;  --brick:#8a5238;   --slate:#1d3b52;
+  /* --- brass ------------------------------------------------------------- */
+  --brass-700:#8a6323; --brass-600:#a87c2e; --brass:#c8973f;
+  --brass-400:#ddb463; --brass-300:#ebce93; --amber:#f7b955; --ember:#ff9e4a;
+  /* --- bone -------------------------------------------------------------- */
+  --bone:#f4efe6; --bone-2:#dcd5c8; --bone-3:#b4aba0;
+  /* --- signal (the site's own three) ------------------------------------- */
+  --lcd:#8ef0d0; --alert:#ff6f57;
+  --pos:var(--lcd); --pos-deep:#2f7d63;
+  --mid:var(--amber); --mid-deep:#8a6323;
+  --neg:var(--alert); --neg-deep:#8f3225;
 
-  /* ===== CONTROLS BAR ===== */
-  .controls{ background:var(--card); border:1px solid var(--line); border-radius:var(--r-lg); box-shadow:var(--shadow-sm); padding:14px; margin-top:18px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
-  .seg{ display:inline-flex; background:var(--app-bg); border:1px solid var(--line); border-radius:999px; padding:3px; }
-  .seg button{ border:0; background:transparent; color:var(--ink-soft); font-size:13px; font-weight:600; padding:8px 16px; border-radius:999px; transition:all .18s var(--ease); min-height:36px; }
-  .seg button[aria-pressed="true"]{ background:var(--navy); color:#fff; box-shadow:var(--shadow-sm); }
-  .field{ position:relative; }
-  .field select{ appearance:none; -webkit-appearance:none; font-family:inherit; font-size:13px; font-weight:600; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:10px; padding:9px 34px 9px 13px; min-height:40px; cursor:pointer; transition:border-color .15s var(--ease), box-shadow .15s var(--ease); }
-  .field select:hover{ border-color:#cbd5e1; }
-  .field::after{ content:""; position:absolute; right:13px; top:50%; width:8px;height:8px;border-right:2px solid var(--ink-faint); border-bottom:2px solid var(--ink-faint); transform:translateY(-65%) rotate(45deg); pointer-events:none; }
-  .controls-spacer{ flex:1 1 auto; }
-  .chips{ display:inline-flex; gap:8px; flex-wrap:wrap; }
-  .chip{ border:1.5px solid var(--line); background:var(--card); border-radius:999px; padding:7px 13px; font-size:12.5px; font-weight:700; color:var(--ink-soft); display:inline-flex; align-items:center; gap:7px; min-height:38px; transition:all .16s var(--ease); }
-  .chip .dot{ width:9px;height:9px;border-radius:50%; }
-  .chip.good .dot{ background:var(--good-light); }
-  .chip.neutral .dot{ background:var(--neutral-light); }
-  .chip.bad .dot{ background:var(--bad-light); }
-  .chip[aria-pressed="true"].good{ background:var(--good-bg); border-color:var(--good-border); color:var(--good); }
-  .chip[aria-pressed="true"].neutral{ background:var(--neutral-bg); border-color:var(--neutral-border); color:var(--neutral); }
-  .chip[aria-pressed="true"].bad{ background:var(--bad-bg); border-color:var(--bad-border); color:var(--bad); }
-  .chip[aria-pressed="false"]{ opacity:.55; }
+  --bg:var(--ink-950); --fg:var(--bone); --fg-muted:var(--bone-2); --fg-dim:var(--bone-3);
+  --accent:var(--brass); --accent-lit:var(--brass-300); --accent-deep:var(--brass-700);
+  --surface:      color-mix(in oklab, var(--ink-800) 90%, var(--walnut) 10%);
+  --surface-2:    color-mix(in oklab, var(--ink-700) 90%, var(--walnut) 10%);
+  --surface-glass:color-mix(in oklab, var(--ink-900) 72%, transparent);
+  --line:     color-mix(in oklab, var(--brass) 30%, transparent);
+  --line-soft:color-mix(in oklab, var(--bone) 40%, transparent);
+  --line-hair:color-mix(in oklab, var(--bone) 8%, transparent);
+  --shade:3 5 9;
 
-  /* ===== KPI CARDS ===== */
-  .kpis{ display:grid; gap:12px; margin-top:16px; grid-template-columns:repeat(6, 1fr); }
-  .kpi{ background:var(--card); border:1px solid var(--line); border-radius:var(--r-md); box-shadow:var(--shadow-sm); padding:14px; position:relative; overflow:hidden; }
-  .kpi::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--navy); }
-  .kpi.k-good::before{ background:var(--good-light); }
-  .kpi.k-neutral::before{ background:var(--neutral-light); }
-  .kpi.k-bad::before{ background:var(--bad-light); }
-  .kpi.k-nps::before{ background:linear-gradient(var(--orange),var(--orange-deep)); }
-  .kpi .lbl{ font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-faint); }
-  .kpi .val{ font-size:28px; font-weight:800; letter-spacing:-1px; margin-top:4px; line-height:1; }
-  .kpi .sub{ font-size:11.5px; color:var(--ink-soft); margin-top:4px; }
-  .kpi.k-good .val{ color:var(--good); }
-  .kpi.k-neutral .val{ color:var(--neutral); }
-  .kpi.k-bad .val{ color:var(--bad); }
-  .kpi.k-nps .val{ color:var(--orange-deep); }
+  --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem; --sp-5:1.5rem;
+  --sp-6:2rem;   --sp-7:2.75rem; --sp-8:3.75rem; --sp-9:5rem;
+  --gut:clamp(1.1rem, .55rem + 2.6vw, 3.25rem);
 
-  /* ===== SECTION HEADER + BULK ===== */
-  .section-head{ display:flex; align-items:center; justify-content:space-between; margin:26px 4px 12px; gap:12px; flex-wrap:wrap; }
-  .section-head h2{ font-size:15px; margin:0; font-weight:800; letter-spacing:-.2px; }
-  .bulk{ display:inline-flex; gap:8px; }
-  .bulk button{ border:1px solid var(--line); background:var(--card); color:var(--navy); font-size:12.5px; font-weight:700; padding:7px 13px; border-radius:9px; min-height:38px; transition:all .15s var(--ease); }
-  .bulk button:hover{ background:#f8fafc; border-color:#cbd5e1; }
+  --r-xs:2px; --r-sm:3px; --r-md:6px; --r-lg:10px; --r-pill:999px;
+  --shadow-1:0 1px 2px rgb(var(--shade)/.55), 0 2px 8px rgb(var(--shade)/.35);
+  --shadow-2:0 6px 14px -4px rgb(var(--shade)/.6), 0 18px 44px -12px rgb(var(--shade)/.62);
+  --shadow-3:0 30px 90px -18px rgb(var(--shade)/.8), 0 4px 18px -6px rgb(var(--shade)/.6);
+  --shadow-text:0 1px 0 rgb(var(--shade)/.55), 0 2px 20px rgb(var(--shade)/.78);
+  --ring-brass:0 0 0 1px color-mix(in oklab, var(--brass) 62%, transparent),
+               0 0 26px -6px color-mix(in oklab, var(--amber) 55%, transparent);
 
-  /* ===== LEVEL 1 — STORE ===== */
-  .store{ background:var(--card); border:1px solid var(--line); border-radius:var(--r-lg); box-shadow:var(--shadow-sm); margin-bottom:14px; overflow:hidden; transition:box-shadow .2s var(--ease); }
-  .store.open{ box-shadow:var(--shadow-md); }
-  .store-head{ width:100%; border:0; background:transparent; text-align:left; display:flex; align-items:center; gap:14px; padding:16px 18px; transition:background .15s var(--ease); }
-  .store-head:hover{ background:#f8fafc; }
-  .caret{ flex:none; width:24px;height:24px;border-radius:7px; display:grid;place-items:center; color:var(--ink-faint); background:var(--app-bg); transition:transform .25s var(--ease), color .15s; }
-  .caret svg{ width:13px;height:13px; }
-  [aria-expanded="true"] > .caret{ transform:rotate(90deg); color:var(--navy); }
-  .store-id{ flex:1 1 auto; min-width:0; }
-  .store-id .name{ font-size:16px; font-weight:800; letter-spacing:-.2px; }
-  .store-id .meta{ font-size:12px; color:var(--ink-soft); margin-top:2px; }
-  .minis{ display:inline-flex; gap:6px; flex:none; }
-  .mini{ font-size:11.5px; font-weight:700; padding:3px 9px; border-radius:7px; display:inline-flex; align-items:center; gap:4px; line-height:1.6; }
-  .mini.g{ background:var(--good-bg); color:var(--good); }
-  .mini.n{ background:var(--neutral-bg); color:var(--neutral); }
-  .mini.b{ background:var(--bad-bg); color:var(--bad); }
-  .nps-badge{ flex:none; text-align:center; min-width:64px; padding:6px 12px; border-radius:var(--r-md); border:1.5px solid; }
-  .nps-badge .num{ font-size:22px; font-weight:800; letter-spacing:-1px; line-height:1; }
-  .nps-badge .cap{ font-size:9.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; opacity:.8; }
-  .nps-pos{ background:var(--good-bg); border-color:var(--good-border); color:var(--good); }
-  .nps-mid{ background:var(--neutral-bg); border-color:var(--neutral-border); color:var(--neutral); }
-  .nps-neg{ background:var(--bad-bg); border-color:var(--bad-border); color:var(--bad); }
+  --ease-cine:cubic-bezier(.16,1,.3,1); --ease-out:cubic-bezier(.22,.61,.24,1);
+  --ease-in-out:cubic-bezier(.65,0,.35,1); --ease-bite:cubic-bezier(.34,1.36,.44,1);
+  --dur-1:110ms; --dur-2:190ms; --dur-3:320ms; --dur-4:520ms; --dur-5:820ms;
 
-  /* collapsible body */
-  .collapse{ display:grid; grid-template-rows:0fr; transition:grid-template-rows .3s var(--ease); }
-  .collapse > .collapse-inner{ overflow:hidden; }
-  [aria-expanded="true"] + .collapse, .collapse.open{ grid-template-rows:1fr; }
-  .reps{ padding:4px 14px 14px; background:#fbfcfe; border-top:1px solid var(--line-soft); }
+  --t--2:clamp(.6875rem,.665rem + .11vw,.75rem);
+  --t--1:clamp(.8125rem,.777rem + .18vw,.9375rem);
+  --t-0: clamp(1rem,.955rem + .22vw,1.125rem);
+  --t-1: clamp(1.1875rem,1.11rem + .38vw,1.4375rem);
+  --t-2: clamp(1.4375rem,1.29rem + .73vw,1.9375rem);
+  --t-3: clamp(1.75rem,1.48rem + 1.35vw,2.75rem);
+  --t-4: clamp(2.125rem,1.63rem + 2.47vw,3.875rem);
+  --t-5: clamp(2.625rem,1.79rem + 4.18vw,5.375rem);
+  --track-5:-.034em; --track-4:-.026em; --track-3:-.018em; --track-2:-.012em;
+  --track-1:-.006em; --track-body:.002em; --track-small:.008em;
+  --track-caps:.165em; --track-title:.34em;
+  --lh-solid:.92; --lh-tight:1.04; --lh-snug:1.18; --lh-lead:1.38; --lh-body:1.62;
 
-  /* ===== LEVEL 2 — REP (hero score) ===== */
-  .rep{ background:var(--card); border:1px solid var(--line); border-radius:var(--r-md); margin-top:10px; overflow:hidden; transition:box-shadow .18s var(--ease); }
-  .rep.open{ box-shadow:var(--shadow-sm); }
-  .rep-head{ width:100%; border:0; background:transparent; text-align:left; display:flex; align-items:center; gap:14px; padding:14px 16px; transition:background .15s var(--ease); }
-  .rep-head:hover{ background:#f8fafc; }
-  .rep-id{ flex:1 1 auto; min-width:0; }
-  .rep-id .name{ font-size:15px; font-weight:700; }
-  .rep-id .ntid{ font-size:11px; color:var(--ink-faint); font-weight:600; background:var(--app-bg); padding:1px 7px; border-radius:5px; margin-left:6px; }
-  .rep-id .meta{ font-size:12px; color:var(--ink-soft); margin-top:5px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  .rep-id .tot{ font-weight:700; color:var(--ink); }
-  .rep-hero{ flex:none; text-align:center; min-width:92px; padding:6px 8px; border-radius:var(--r-md); border:2px solid; }
-  .rep-hero .num{ font-size:42px; font-weight:800; letter-spacing:-2px; line-height:.92; font-variant-numeric:tabular-nums; }
-  .rep-hero .cap{ font-size:9.5px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; opacity:.75; }
-  .hero-pos{ background:var(--good-bg); border-color:var(--good-light); color:var(--good); }
-  .hero-mid{ background:var(--neutral-bg); border-color:var(--neutral-light); color:var(--neutral); }
-  .hero-neg{ background:var(--bad-bg); border-color:var(--bad-light); color:var(--bad); }
-  .buckets{ padding:2px 12px 12px; background:#fbfcfe; border-top:1px solid var(--line-soft); }
+  --font-display:"Bodoni Moda",Didot,"Bodoni MT","Playfair Display","Times New Roman",Times,serif;
+  --font-text:"Archivo",ui-sans-serif,"Helvetica Neue",Helvetica,Arial,sans-serif;
+  --bar-h:clamp(56px,3.4rem + 1vw,72px);
+  color-scheme:dark; accent-color:var(--brass);
+}
 
-  /* ===== LEVEL 3 — BUCKET ===== */
-  .bucket{ margin-top:9px; border:1px solid var(--line); border-radius:var(--r-sm); overflow:hidden; background:var(--card); }
-  .bucket-head{ width:100%; border:0; background:transparent; text-align:left; display:flex; align-items:center; gap:11px; padding:11px 13px; font-weight:700; font-size:13.5px; transition:background .15s var(--ease); }
-  .bucket-head:hover{ background:#f8fafc; }
-  .bucket-head .swatch{ width:10px;height:10px;border-radius:3px; flex:none; }
-  .bucket.good .swatch{ background:var(--good-light); }
-  .bucket.neutral .swatch{ background:var(--neutral-light); }
-  .bucket.bad .swatch{ background:var(--bad-light); }
-  .bucket.good .bucket-head{ color:var(--good); }
-  .bucket.neutral .bucket-head{ color:var(--neutral); }
-  .bucket.bad .bucket-head{ color:var(--bad); }
-  .bucket-head .label{ flex:1 1 auto; }
-  .count-pill{ font-size:11.5px; font-weight:800; padding:2px 9px; border-radius:999px; background:var(--app-bg); color:var(--ink-soft); min-width:24px; text-align:center; }
-  .bucket-head .caret{ background:transparent; }
-  .surveys{ padding:4px 12px 12px; }
-  .survey{ display:flex; gap:12px; align-items:flex-start; padding:11px 4px; border-top:1px solid var(--line-soft); }
-  .surveys .survey:first-child{ border-top:0; }
-  .score-chip{ flex:none; width:34px;height:34px;border-radius:9px; display:grid;place-items:center; font-weight:800; font-size:15px; font-variant-numeric:tabular-nums; }
-  .score-chip.g{ background:var(--good-bg); color:var(--good); border:1px solid var(--good-border); }
-  .score-chip.n{ background:var(--neutral-bg); color:var(--neutral); border:1px solid var(--neutral-border); }
-  .score-chip.b{ background:var(--bad-bg); color:var(--bad); border:1px solid var(--bad-border); }
-  .survey-body{ flex:1 1 auto; min-width:0; }
-  .survey-top{ display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
-  .txn{ font-size:11.5px; font-weight:700; color:var(--navy); background:#eef2ff; padding:2px 8px; border-radius:6px; }
-  .date{ font-size:11.5px; color:var(--ink-faint); font-weight:600; }
-  .comment{ font-size:13px; color:var(--ink-soft); margin-top:5px; }
-  .comment.empty{ color:var(--ink-faint); font-style:italic; }
-  .empty-bucket{ font-size:12.5px; color:var(--ink-faint); padding:12px 4px; font-style:italic; }
+/* ---------- reset ---------- */
+*,*::before,*::after{box-sizing:border-box}
+*{margin:0}
+html{overflow-x:clip;-webkit-text-size-adjust:100%;scroll-padding-top:calc(var(--bar-h) + var(--sp-5))}
+body{
+  min-height:100svh; overflow-x:clip;
+  background:var(--bg); color:var(--fg);
+  font-family:var(--font-text); font-size:var(--t-0); font-weight:400;
+  line-height:var(--lh-body); letter-spacing:var(--track-body);
+  font-variant-numeric:tabular-nums;
+  text-rendering:optimizeLegibility;
+  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  /* one fixed warm pool from the top edge — the room is lit from the pass */
+  background-image:radial-gradient(120% 78% at 50% 0%,
+      color-mix(in oklab, var(--walnut) 20%, transparent) 0%, transparent 62%);
+  background-attachment:fixed;
+}
+svg{display:block;max-width:100%}
+button,input,select,textarea{font:inherit;color:inherit;letter-spacing:inherit}
+button{background:none;border:0;padding:0;cursor:pointer}
+a{color:inherit;text-decoration:none}
+::selection{background:color-mix(in oklab, var(--brass) 55%, transparent);color:var(--ink-950)}
+*{scrollbar-width:thin;scrollbar-color:color-mix(in oklab,var(--brass) 45%,transparent) transparent}
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-thumb{background:color-mix(in oklab,var(--brass) 40%,transparent);
+  border-radius:var(--r-pill);border:3px solid transparent;background-clip:content-box}
+*::-webkit-scrollbar-track{background:transparent}
+:focus-visible{outline:3px solid var(--brass-300);outline-offset:2px;
+  box-shadow:0 0 0 6px rgb(var(--shade)/.9);border-radius:var(--r-xs)}
+:focus:not(:focus-visible){outline:none}
+[hidden]{display:none !important}
 
-  /* ===== TOOLBAR / BANNER / MISC ===== */
-  .toolbar{ display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; align-items:center; }
-  .btn{ background:var(--navy-deep); color:#fff; border:none; border-radius:9px; padding:10px 18px; font-family:inherit; font-size:13px; font-weight:700; cursor:pointer; }
-  .btn:hover:not(:disabled){ background:var(--navy); }
-  .btn:disabled{ opacity:.4; cursor:not-allowed; }
-  .note{ font-size:12px; color:var(--ink-soft); }
-  .banner{ padding:12px 16px; border-radius:var(--r-md); font-size:13px; margin-top:16px; display:none; line-height:1.5; }
-  .banner.info{ display:block; background:var(--neutral-bg); border:1px solid var(--neutral-border); color:#713f12; }
-  .banner.success{ display:block; background:var(--good-bg); border:1px solid var(--good-border); color:var(--good); }
-  .banner.error{ display:block; background:var(--bad-bg); border:1px solid var(--bad-border); color:var(--bad); }
-  .empty{ text-align:center; color:var(--ink-faint); padding:50px 0; font-size:14px; }
-  .src{ text-align:center; color:#bbc3ce; font-size:11px; margin-top:26px; }
+/* ---------- type primitives ---------- */
+.kicker{
+  font-family:var(--font-text); font-size:var(--t--2); font-weight:600;
+  font-stretch:84%; text-transform:uppercase; letter-spacing:var(--track-title);
+  line-height:1; color:var(--accent-lit); margin-inline-end:calc(-1 * var(--track-title));
+  text-shadow:0 1px 14px rgb(var(--shade)/.8);
+}
+.caps{
+  font-family:var(--font-text); font-size:var(--t--2); font-weight:600;
+  font-stretch:90%; text-transform:uppercase; letter-spacing:var(--track-caps);
+  line-height:1; margin-inline-end:calc(-1 * var(--track-caps));
+}
+.micro{font-size:var(--t--1);line-height:1.45;letter-spacing:var(--track-small);color:var(--fg-dim)}
+.sr-only:not(:focus):not(:active){position:absolute!important;width:1px;height:1px;padding:0;
+  margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.skip{position:fixed;top:var(--sp-2);left:var(--sp-2);z-index:999;
+  display:inline-flex;align-items:center;min-height:44px;
+  padding:var(--sp-3) var(--sp-4);border-radius:var(--r-sm);
+  background:var(--brass);color:var(--ink-950);font-size:var(--t--2);font-weight:700;
+  text-transform:uppercase;letter-spacing:var(--track-caps);
+  transform:translateY(calc(-100% - var(--sp-6)));
+  transition:transform var(--dur-2) var(--ease-bite)}
+.skip:focus-visible{transform:none}
+#results:focus{outline:none}
 
-  /* ===== RESPONSIVE ===== */
-  @media (max-width:880px){ .kpis{ grid-template-columns:repeat(3,1fr); } }
-  @media (max-width:560px){
-    .wrap{ padding:0 12px 48px; }
-    .kpis{ grid-template-columns:repeat(2,1fr); }
-    .kpi .val{ font-size:24px; }
-    .controls{ padding:12px; }
-    .controls-spacer{ display:none; }
-    .seg, .field, .chips{ width:100%; }
-    .field select{ width:100%; }
-    .seg{ justify-content:center; }
-    .updated{ text-align:left; width:100%; }
-    .appbar-spacer{ display:none; }
-    .store-head, .rep-head{ flex-wrap:wrap; }
-    .minis{ order:3; width:100%; margin-top:8px; }
-    .rep-id{ flex:1 1 60%; }
-    .rep-hero{ min-width:78px; }
-    .rep-hero .num{ font-size:36px; }
-  }
+.wrap{width:min(1360px,100%);margin-inline:auto;padding-inline:var(--gut)}
+
+/* ============================ MASTHEAD ============================ */
+.masthead{position:relative;padding:clamp(2.25rem,1.2rem + 4.2vw,4.75rem) 0 var(--sp-6)}
+.masthead::after{content:"";position:absolute;inset-inline:var(--gut);bottom:0;height:1px;
+  background:linear-gradient(90deg,transparent 0%,
+    color-mix(in oklab,var(--brass) 52%,transparent) 3%,
+    color-mix(in oklab,var(--brass) 52%,transparent) 72%, transparent 100%)}
+.mast-row{display:flex;align-items:flex-end;gap:var(--sp-6);flex-wrap:wrap}
+.mast-id{flex:1 1 22ch;min-width:0}
+.mast-title{display:grid;gap:0;margin-top:var(--sp-4)}
+.mast-title > span{
+  display:block; font-family:var(--font-display); font-optical-sizing:none;
+  font-size:var(--t-5); line-height:var(--lh-solid); letter-spacing:var(--track-5);
+  text-shadow:var(--shadow-text);
+}
+.mast-title > span:nth-child(1){font-weight:430;font-variation-settings:"opsz" 52,"wght" 430}
+.mast-title > span:nth-child(2){font-weight:430;font-variation-settings:"opsz" 52,"wght" 430;
+  font-style:italic;color:var(--accent-lit);margin-inline-start:.14em}
+.mast-title > span:nth-child(3){font-size:var(--t-1);font-weight:640;
+  font-variation-settings:"opsz" 22,"wght" 640;line-height:1.6;
+  margin-inline-start:.3em;letter-spacing:var(--track-1);
+  color:color-mix(in oklab,var(--brass) 72%,var(--bone-3))}
+.mast-sub{margin-top:var(--sp-4);color:var(--fg-dim);max-width:52ch;text-wrap:pretty}
+.mast-sub b{color:var(--fg-muted);font-weight:600}
+
+/* the standing ledger on the right of the masthead */
+.mast-meta{flex:0 1 auto;display:grid;gap:var(--sp-3);min-width:min(100%,15rem);
+  padding-left:var(--sp-5);border-left:1px solid var(--line-hair)}
+.mast-meta .caps{color:var(--fg-dim)}
+.mast-meta .v{font-family:var(--font-display);font-optical-sizing:none;
+  font-variation-settings:"opsz" 22,"wght" 540;font-size:var(--t-1);
+  letter-spacing:var(--track-1);line-height:1.1;color:var(--fg)}
+
+/* ============================ CONTROL BAR ============================ */
+.bar{
+  position:sticky; top:0; z-index:60;
+  margin-top:var(--sp-5);
+  background:linear-gradient(to bottom,
+    color-mix(in oklab,var(--ink-950) 97%,transparent) 0%,
+    color-mix(in oklab,var(--ink-950) 94%,transparent) 100%);
+  -webkit-backdrop-filter:blur(18px) saturate(1.35);
+  backdrop-filter:blur(18px) saturate(1.35);
+}
+.bar::after{content:"";position:absolute;inset-inline:0;bottom:0;height:1px;
+  background:linear-gradient(90deg,transparent 0%,
+    color-mix(in oklab,var(--brass) 42%,transparent) 8%,
+    color-mix(in oklab,var(--brass) 42%,transparent) 78%, transparent 100%)}
+.bar-in{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap;
+  min-height:var(--bar-h);padding-block:var(--sp-3)}
+.bar-gap{flex:1 1 var(--sp-4)}
+
+/* segmented period control */
+.seg{display:inline-flex;padding:2px;border-radius:var(--r-sm);
+  background:color-mix(in oklab,var(--ink-900) 70%,transparent);
+  box-shadow:inset 0 0 0 1px var(--line-soft)}
+.seg button{
+  min-height:38px;padding-inline:var(--sp-4);border-radius:var(--r-xs);color:var(--fg-dim);
+  font-size:var(--t--2);font-weight:600;font-stretch:90%;text-transform:uppercase;
+  letter-spacing:var(--track-caps);line-height:1;white-space:nowrap;
+  transition:color var(--dur-2) var(--ease-out),background var(--dur-2) var(--ease-out);
+}
+.seg button:hover{color:var(--fg);background:color-mix(in oklab,var(--bone) 7%,transparent)}
+.seg button[aria-pressed="true"]{color:var(--ink-950);
+  background:linear-gradient(180deg,var(--brass-300),var(--brass));
+  box-shadow:0 1px 0 rgb(var(--shade)/.5)}
+
+/* selects */
+.field{position:relative;display:inline-flex;align-items:center}
+.field::after{content:"";position:absolute;right:12px;width:7px;height:7px;
+  border-right:1.5px solid var(--brass);border-bottom:1.5px solid var(--brass);
+  transform:translateY(-2px) rotate(45deg);pointer-events:none;
+  transition:transform var(--dur-2) var(--ease-out)}
+.field:hover::after{transform:translateY(0) rotate(45deg)}
+.field select{
+  appearance:none;-webkit-appearance:none;
+  min-height:40px;padding:0 var(--sp-7) 0 var(--sp-3);
+  border:0;border-radius:var(--r-xs);cursor:pointer;
+  color:var(--fg);background:color-mix(in oklab,var(--ink-900) 62%,transparent);
+  box-shadow:inset 0 0 0 1px var(--line-soft);
+  font-size:var(--t--2);font-weight:600;font-stretch:90%;text-transform:uppercase;
+  letter-spacing:var(--track-caps);line-height:1;
+  transition:box-shadow var(--dur-2) var(--ease-out),background var(--dur-2) var(--ease-out);
+}
+.field select:hover{box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--brass) 55%,transparent)}
+.field select option{background:var(--ink-850);color:var(--fg);
+  text-transform:none;letter-spacing:0;font-weight:400}
+
+/* band chips */
+.chips{display:inline-flex;gap:var(--sp-2);flex-wrap:wrap}
+.chip{
+  display:inline-flex;align-items:center;gap:var(--sp-2);
+  min-height:40px;padding-inline:var(--sp-3);border-radius:var(--r-xs);
+  color:var(--fg-dim);background:color-mix(in oklab,var(--ink-900) 55%,transparent);
+  box-shadow:inset 0 0 0 1px var(--line-hair);
+  -webkit-backdrop-filter:blur(10px) saturate(1.3);backdrop-filter:blur(10px) saturate(1.3);
+  font-size:var(--t--2);font-weight:600;font-stretch:90%;text-transform:uppercase;
+  letter-spacing:var(--track-caps);line-height:1;white-space:nowrap;
+  transition:color var(--dur-2) var(--ease-out),box-shadow var(--dur-2) var(--ease-out),
+             background var(--dur-2) var(--ease-out),opacity var(--dur-2) var(--ease-out);
+}
+.chip .dot{width:6px;height:6px;flex:none;border-radius:50%;background:currentColor;
+  transition:box-shadow var(--dur-2) var(--ease-out)}
+.chip.good[aria-pressed="true"]{color:var(--pos);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--pos) 42%,transparent)}
+.chip.neutral[aria-pressed="true"]{color:var(--mid);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--mid) 42%,transparent)}
+.chip.bad[aria-pressed="true"]{color:var(--neg);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--neg) 42%,transparent)}
+.chip[aria-pressed="true"] .dot{box-shadow:0 0 9px 1px currentColor}
+.chip[aria-pressed="false"]{opacity:1;color:var(--fg-dim);
+  box-shadow:inset 0 0 0 1px var(--line-hair)}
+.chip[aria-pressed="false"] .dot{opacity:.5;box-shadow:none}
+.chip:hover{color:var(--fg)}
+.chip[aria-pressed="true"]:hover{filter:brightness(1.12)}
+
+/* text buttons */
+.tbtn{
+  min-height:40px;padding-inline:var(--sp-3);border-radius:var(--r-xs);color:var(--fg-dim);
+  font-size:var(--t--2);font-weight:600;font-stretch:90%;text-transform:uppercase;
+  letter-spacing:var(--track-caps);line-height:1;white-space:nowrap;
+  transition:color var(--dur-2) var(--ease-out),background var(--dur-2) var(--ease-out);
+}
+.tbtn:hover{color:var(--fg);background:color-mix(in oklab,var(--bone) 7%,transparent)}
+
+/* ============================ BANNER ============================ */
+.banner{display:none;margin:var(--sp-5) 0 0;padding:var(--sp-3) var(--sp-4);
+  border-radius:var(--r-sm);font-size:var(--t--1);line-height:1.5;
+  box-shadow:inset 0 0 0 1px var(--line-hair)}
+.banner.info,.banner.success,.banner.error{display:block}
+.banner.info{color:var(--brass-300);background:color-mix(in oklab,var(--brass) 12%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--brass) 34%,transparent)}
+.banner.success{color:var(--pos);background:color-mix(in oklab,var(--pos) 10%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--pos) 32%,transparent)}
+.banner.error{color:var(--neg);background:color-mix(in oklab,var(--neg) 11%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--neg) 36%,transparent)}
+
+/* ============================ KPI LEDGER ============================ */
+/* Not cards. A ruled ledger strip — hairline columns, Bodoni numerals. */
+.kpis{display:grid;gap:1px;margin-top:var(--sp-6);
+  grid-template-columns:repeat(auto-fit,minmax(clamp(8rem,11.2vw,10.5rem),1fr));
+  background:var(--line-hair);                    /* the 1px gaps ARE the rules */
+  box-shadow:inset 0 1px 0 var(--line-hair),inset 0 -1px 0 var(--line-hair)}
+.kpi{position:relative;padding:var(--sp-4);background:var(--bg)}
+.kpi::before{content:"";position:absolute;left:0;top:var(--sp-4);bottom:var(--sp-4);
+  width:2px;background:transparent;transition:background var(--dur-3) var(--ease-out)}
+.kpi .lbl{display:flex;align-items:flex-start;min-height:2.1em;
+  font-size:var(--t--2);font-weight:600;font-stretch:90%;text-transform:uppercase;
+  letter-spacing:var(--track-caps);line-height:1.05;
+  color:var(--fg-dim);margin-inline-end:calc(-1 * var(--track-caps))}
+.kpi .val{display:block;margin-top:var(--sp-3);
+  font-family:var(--font-display);font-optical-sizing:none;
+  font-variation-settings:"opsz" 30,"wght" 520;font-size:var(--t-3);
+  line-height:var(--lh-solid);letter-spacing:var(--track-3);color:var(--fg)}
+.kpi .sub{display:block;margin-top:var(--sp-2);font-size:var(--t--1);
+  line-height:1.4;color:var(--fg-dim)}
+.kpi.k-good .val{color:var(--pos)}
+.kpi.k-neutral .val{color:var(--mid)}
+.kpi.k-bad .val{color:var(--neg)}
+.kpi.k-nps .val{color:var(--brass-300);font-size:var(--t-4);
+  font-variation-settings:"opsz" 40,"wght" 520}
+.kpi.k-goal .val{color:var(--fg-muted)}
+.kpi.k-goal::before{background:color-mix(in oklab,var(--brass) 40%,transparent)}
+.kpi .val .pct{font-size:.56em;letter-spacing:.02em;vertical-align:.2em;
+  color:color-mix(in oklab,currentColor 60%,transparent)}
+.kpi.k-good::before{background:color-mix(in oklab,var(--pos) 50%,transparent)}
+.kpi.k-neutral::before{background:color-mix(in oklab,var(--mid) 50%,transparent)}
+.kpi.k-bad::before{background:color-mix(in oklab,var(--neg) 50%,transparent)}
+.kpi.k-nps::before{background:color-mix(in oklab,var(--brass) 60%,transparent)}
+
+/* ============================ SECTION HEAD ============================ */
+.section-head{display:flex;align-items:flex-end;gap:var(--sp-4);flex-wrap:wrap;
+  margin:var(--sp-8) 0 var(--sp-4)}
+.section-head h2{flex:1 1 auto;font-family:var(--font-display);font-optical-sizing:none;
+  font-variation-settings:"opsz" 30,"wght" 500;font-size:var(--t-2);
+  line-height:var(--lh-tight);letter-spacing:var(--track-2);font-weight:500}
+.section-head .bulk{display:flex;gap:var(--sp-1)}
+
+/* ============================ THE LEDGER (districts) ============================ */
+#results{margin-bottom:var(--sp-9)}
+.district{position:relative}
+.district::before{content:"";position:absolute;inset-inline:0;top:0;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,
+    color-mix(in oklab,var(--brass) 30%,transparent) 0%,
+    color-mix(in oklab,var(--bone) 9%,transparent) 34%, transparent 100%)}
+.district:last-child{box-shadow:inset 0 -1px 0 var(--line-hair)}
+.district-head.low-n .rank{color:var(--fg-dim)}
+.district-head.low-n .nps-badge{opacity:.7}
+.district-head.low-n .dmeta::after{content:" · thin sample";color:var(--mid);font-weight:600}
+.district[data-unmatched] .dname{font-family:var(--font-text);font-size:var(--t-0);
+  font-weight:600;font-stretch:90%;text-transform:uppercase;letter-spacing:var(--track-caps);
+  color:var(--mid)}
+.district[data-unmatched]{box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--mid) 26%,transparent)}
+.district.open{background:linear-gradient(to bottom,
+  color-mix(in oklab,var(--brass) 5%,transparent) 0%, transparent 220px)}
+.store.open > .store-head .name,.rep.open > .rep-head .name{color:var(--brass-300)}
+.district.open > .district-head .dname{color:var(--brass-300)}
+
+.district-head{
+  display:grid;width:100%;text-align:left;align-items:center;
+  grid-template-columns:auto auto minmax(22ch,38ch) 1fr auto auto auto;
+  gap:var(--sp-3) var(--sp-5);
+  padding:var(--sp-5) var(--sp-2) var(--sp-5) var(--sp-3);
+  transition:background var(--dur-2) var(--ease-out),box-shadow var(--dur-2) var(--ease-out);
+}
+.district-head:hover,.district-head:focus-visible{
+  background:linear-gradient(90deg,
+    color-mix(in oklab,var(--brass) 13%,transparent) 0%,
+    color-mix(in oklab,var(--brass) 5%,transparent) 42%, transparent 88%);
+  box-shadow:inset 3px 0 0 var(--brass)}
+.district-head:hover .rank{color:var(--ink-950);
+  background:linear-gradient(180deg,var(--brass-300),var(--brass));
+  border-radius:var(--r-xs);padding:2px 5px;margin:-2px -5px}
+.district-head .rank{
+  font-family:var(--font-display);font-optical-sizing:none;
+  font-variation-settings:"opsz" 12,"wght" 600;font-size:var(--t--1);
+  letter-spacing:0;color:var(--brass-600);min-width:1.6em;text-align:right}
+.district-head:hover .rank{color:var(--brass)}
+.dname{font-family:var(--font-display);font-optical-sizing:none;
+  font-variation-settings:"opsz" 30,"wght" 540;font-size:var(--t-2);
+  line-height:var(--lh-tight);letter-spacing:var(--track-2);color:var(--fg)}
+.district-id{min-width:0;max-width:38ch}
+.dname{overflow-wrap:anywhere}
+.dmeta{margin-top:var(--sp-1);font-size:var(--t--1);line-height:1.4;color:var(--fg-dim)}
+/* the row's dead centre now carries the sharpest thing a customer said today */
+.peek{min-width:0;font-family:var(--font-display);font-optical-sizing:none;
+  font-variation-settings:"opsz" 14,"wght" 420;font-size:var(--t--1);font-style:italic;
+  line-height:1.4;letter-spacing:0;text-align:left;
+  color:color-mix(in oklab,var(--bone-3) 72%,transparent);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  transition:color var(--dur-2) var(--ease-out)}
+.district-head:hover .peek{color:var(--fg-muted)}
+.dmeta .dm{color:var(--brass-300);font-weight:600}
+
+/* the meter — a hairline bar, never a rounded progress pill */
+.meter{position:relative;width:clamp(96px,13vw,200px);height:2px;
+  background:linear-gradient(90deg,
+    color-mix(in oklab,var(--neg) 15%,transparent) 0%,
+    color-mix(in oklab,var(--bone) 11%,transparent) 50%,
+    color-mix(in oklab,var(--pos) 15%,transparent) 100%)}
+/* the goal. 80 on a -100..+100 rail sits at 90%. */
+.meter::after{content:"";position:absolute;left:90%;top:-6px;width:1px;height:14px;
+  background:color-mix(in oklab,var(--brass-300) 62%,transparent);
+  box-shadow:0 0 8px -2px var(--amber)}
+.meter span{position:absolute;inset-block:0;left:50%;height:2px;width:var(--w,0%);
+  transition:width var(--dur-5) var(--ease-cine)}
+.meter span.pos{background:linear-gradient(90deg,color-mix(in oklab,var(--pos) 45%,transparent),var(--pos));
+  box-shadow:0 0 10px -1px color-mix(in oklab,var(--pos) 70%,transparent)}
+.meter span.mid{background:linear-gradient(90deg,color-mix(in oklab,var(--mid) 45%,transparent),var(--mid));
+  box-shadow:0 0 10px -1px color-mix(in oklab,var(--mid) 70%,transparent)}
+.meter span.neg{right:50%;left:auto;
+  background:linear-gradient(270deg,color-mix(in oklab,var(--neg) 45%,transparent),var(--neg));
+  box-shadow:0 0 10px -1px color-mix(in oklab,var(--neg) 70%,transparent)}
+.meter::before{content:"";position:absolute;left:50%;top:-4px;width:1px;height:10px;
+  background:color-mix(in oklab,var(--brass) 68%,transparent)}
+/* an end-cap so a small value still reads as a measurement, not a smudge */
+.meter span::after{content:"";position:absolute;right:-1px;top:-3px;width:2px;height:8px;
+  background:currentColor}
+.meter span.neg::after{right:auto;left:-1px}
+.meter span.pos{color:var(--pos)}.meter span.mid{color:var(--mid)}.meter span.neg{color:var(--neg)}
+
+/* ============================ STORE / REP ============================ */
+.stores{position:relative;padding:0 0 var(--sp-6) clamp(var(--sp-3),2.2vw,var(--sp-6))}
+.stores,.reps,.buckets{padding-inline-end:6px}
+.stores::before,.reps::before{content:"";position:absolute;left:0;top:0;bottom:var(--sp-5);width:1px;
+  background:linear-gradient(to bottom,color-mix(in oklab,var(--brass) 34%,transparent) 0%,
+    color-mix(in oklab,var(--brass) 10%,transparent) 55%,transparent 100%)}
+.store{position:relative}
+.store::before{content:"";position:absolute;inset-inline:0;top:0;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,
+    color-mix(in oklab,var(--brass) 18%,transparent) 0%,
+    color-mix(in oklab,var(--bone) 7%,transparent) 30%, transparent 92%)}
+.store-head{
+  display:grid;width:100%;text-align:left;align-items:center;
+  grid-template-columns:auto 1fr auto auto;gap:var(--sp-3) var(--sp-4);
+  padding:var(--sp-4) var(--sp-2) var(--sp-4) var(--sp-3);
+  transition:background var(--dur-2) var(--ease-out),box-shadow var(--dur-2) var(--ease-out);
+}
+.store-head:hover,.store-head:focus-visible{
+  background:linear-gradient(90deg,
+    color-mix(in oklab,var(--brass) 10%,transparent) 0%,
+    color-mix(in oklab,var(--brass) 4%,transparent) 40%, transparent 84%);
+  box-shadow:inset 2px 0 0 color-mix(in oklab,var(--brass) 76%,transparent)}
+.store-id{min-width:0}
+.store-id .name{font-family:var(--font-display);font-optical-sizing:none;
+  font-variation-settings:"opsz" 24,"wght" 540;font-size:var(--t-1);
+  line-height:var(--lh-snug);letter-spacing:var(--track-1);color:var(--fg)}
+.store-id .meta{margin-top:2px;font-size:var(--t--1);line-height:1.4;color:var(--fg-dim)}
+.store-id .meta .scope{margin-inline-start:var(--sp-2);font-size:var(--t--2);
+  font-weight:600;font-stretch:88%;text-transform:uppercase;letter-spacing:var(--track-caps);
+  margin-inline-end:calc(-1 * var(--track-caps));color:var(--brass-600)}
+
+.reps{position:relative;padding:var(--sp-1) 0 var(--sp-5) clamp(var(--sp-3),2vw,var(--sp-5))}
+.rep{position:relative}
+.rep::before{content:"";position:absolute;inset-inline:0;top:0;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,
+    color-mix(in oklab,var(--bone) 11%,transparent) 0%, transparent 78%)}
+.rep-head{
+  display:grid;width:100%;text-align:left;align-items:center;
+  grid-template-columns:auto 1fr auto;gap:var(--sp-3) var(--sp-4);
+  padding:var(--sp-3) var(--sp-2) var(--sp-3) var(--sp-3);
+  transition:background var(--dur-2) var(--ease-out),box-shadow var(--dur-2) var(--ease-out);
+}
+.rep-head:hover,.rep-head:focus-visible{
+  background:linear-gradient(90deg,
+    color-mix(in oklab,var(--bone) 7%,transparent) 0%, transparent 72%);
+  box-shadow:inset 2px 0 0 color-mix(in oklab,var(--brass) 52%,transparent)}
+.rep-id{min-width:0}
+.rep-id .name{font-weight:600;font-size:var(--t-0);line-height:1.25;color:var(--fg)}
+.rep-id .ntid{margin-left:var(--sp-2);font-size:var(--t--2);font-weight:500;
+  letter-spacing:var(--track-small);color:var(--brass-600);font-variant-numeric:tabular-nums}
+.rep-id .meta{margin-top:3px;display:flex;flex-wrap:wrap;gap:var(--sp-2);align-items:center}
+.rep-id .meta .tot{font-size:var(--t--1);color:var(--fg-dim)}
+
+/* count minis — bare tinted numerals with a leading bead, no pill chrome */
+.minis{display:flex;gap:var(--sp-3);align-items:center}
+.mini{display:inline-flex;align-items:center;gap:5px;font-size:var(--t--1);
+  font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:var(--track-small)}
+.mini::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
+.mini.g{color:color-mix(in oklab,var(--pos) 82%,var(--bone))}
+.mini.n{color:color-mix(in oklab,var(--mid) 86%,var(--bone))}
+.mini.b{color:color-mix(in oklab,var(--neg) 86%,var(--bone))}
+.rep-id .meta .mini{font-size:var(--t--2);opacity:.9}
+
+/* the score badge — a small brass-ruled plate, Bodoni numeral */
+.nps-badge,.rep-hero{
+  display:grid;place-items:center;gap:0;min-width:clamp(64px,7.5vw,84px);
+  padding:var(--sp-2) var(--sp-3);border-radius:var(--r-sm);
+  background:color-mix(in oklab,var(--ink-900) 62%,transparent);
+  box-shadow:inset 0 0 0 1px var(--line-hair),inset 0 1px 0 rgb(255 255 255/.04);
+  transition:box-shadow var(--dur-3) var(--ease-out)}
+.nps-badge .num,.rep-hero .num{
+  font-family:var(--font-display);font-optical-sizing:none;
+  font-variation-settings:"opsz" 22,"wght" 560;font-size:var(--t-1);
+  line-height:1;letter-spacing:var(--track-1);font-variant-numeric:tabular-nums}
+.nps-badge .cap,.rep-hero .cap{margin-top:5px;font-size:var(--t--2);font-weight:600;
+  font-stretch:88%;text-transform:uppercase;letter-spacing:var(--track-caps);line-height:1;
+  color:var(--fg-dim);margin-inline-end:calc(-1 * var(--track-caps))}
+.nps-pos .num,.hero-pos .num{color:var(--pos)}
+.nps-mid .num,.hero-mid .num{color:var(--mid)}
+.nps-neg .num,.hero-neg .num{color:var(--neg)}
+.nps-pos,.hero-pos{box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--pos) 30%,transparent)}
+.nps-mid,.hero-mid{box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--mid) 30%,transparent)}
+.nps-neg,.hero-neg{box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--neg) 34%,transparent)}
+.district-head .nps-badge{min-width:clamp(76px,9vw,100px)}
+.district-head .nps-badge .num{font-size:var(--t-2);font-variation-settings:"opsz" 30,"wght" 560}
+.rep-hero{min-width:clamp(58px,6.5vw,74px);padding:var(--sp-2)}
+.rep-hero .num{font-size:var(--t-0);font-variation-settings:"opsz" 18,"wght" 560}
+
+/* the store's MTD goal pill (JS-rendered — class hook, no inline colour) */
+.goal-pill{display:inline-block;margin-top:6px;padding:3px 9px;border-radius:var(--r-xs);
+  font-size:var(--t--2);font-weight:600;letter-spacing:var(--track-small);line-height:1.35}
+.goal-pill b{font-weight:700}
+.goal-pill.neutral{color:var(--fg-dim);box-shadow:inset 0 0 0 1px var(--line-hair)}
+.goal-pill.hit{color:var(--pos);background:color-mix(in oklab,var(--pos) 9%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--pos) 30%,transparent)}
+.goal-pill.behind{color:var(--mid);background:color-mix(in oklab,var(--mid) 9%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--mid) 30%,transparent)}
+
+/* ============================ BUCKETS / SURVEYS ============================ */
+.buckets{padding:var(--sp-2) 0 var(--sp-4) clamp(0px,1.6vw,var(--sp-4));
+  display:grid;gap:var(--sp-1)}
+.bucket-head{display:flex;width:100%;align-items:center;gap:var(--sp-3);
+  padding:var(--sp-2) var(--sp-2) var(--sp-2) 0;border-radius:var(--r-xs);
+  transition:background var(--dur-2) var(--ease-out)}
+.bucket-head:hover{background:color-mix(in oklab,var(--bone) 5%,transparent)}
+.bucket-head .swatch{width:3px;height:16px;flex:none;border-radius:1px}
+.bucket.good .swatch{background:var(--pos);box-shadow:0 0 8px -1px var(--pos)}
+.bucket.neutral .swatch{background:var(--mid);box-shadow:0 0 8px -1px var(--mid)}
+.bucket.bad .swatch{background:var(--neg);box-shadow:0 0 8px -1px var(--neg)}
+.bucket-head .label{flex:1 1 auto;text-align:left;font-size:var(--t--2);font-weight:600;
+  font-stretch:90%;text-transform:uppercase;letter-spacing:var(--track-caps);
+  line-height:1;color:var(--fg-muted)}
+.bucket.good .label{color:color-mix(in oklab,var(--pos) 62%,var(--bone))}
+.bucket.neutral .label{color:color-mix(in oklab,var(--mid) 62%,var(--bone))}
+.bucket.bad .label{color:color-mix(in oklab,var(--neg) 62%,var(--bone))}
+.bucket-head .count-pill{font-size:var(--t--2);font-weight:600;color:var(--fg-dim);
+  font-variant-numeric:tabular-nums;min-width:2ch;text-align:right}
+
+.surveys{display:grid;gap:0;padding:var(--sp-1) 0 var(--sp-3) var(--sp-4)}
+.survey{display:grid;grid-template-columns:auto 1fr;gap:var(--sp-3);align-items:start;
+  padding:var(--sp-3) 0;border-top:1px solid var(--line-hair)}
+.survey:first-child{border-top:0}
+.score-chip{display:grid;place-items:center;width:34px;height:34px;flex:none;
+  border-radius:var(--r-xs);font-family:var(--font-display);font-optical-sizing:none;
+  font-variation-settings:"opsz" 16,"wght" 600;font-size:var(--t-0);line-height:1;
+  font-variant-numeric:tabular-nums}
+.score-chip.g{color:var(--pos);background:color-mix(in oklab,var(--pos) 11%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--pos) 34%,transparent)}
+.score-chip.n{color:var(--mid);background:color-mix(in oklab,var(--mid) 11%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--mid) 34%,transparent)}
+.score-chip.b{color:var(--neg);background:color-mix(in oklab,var(--neg) 12%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--neg) 38%,transparent)}
+.survey-body{min-width:0}
+.survey-top{display:flex;flex-wrap:wrap;gap:var(--sp-2);align-items:center;
+  font-size:var(--t--2);line-height:1}
+.survey-top .txn{font-weight:600;font-stretch:90%;text-transform:uppercase;
+  letter-spacing:var(--track-caps);color:var(--brass-600)}
+.survey-top .date{color:var(--fg-dim);letter-spacing:var(--track-small)}
+/* the comment is the point of the page — give it the display face */
+.comment{margin-top:6px;font-family:var(--font-display);font-optical-sizing:none;
+  font-variation-settings:"opsz" 16,"wght" 440;font-size:var(--t-0);
+  line-height:1.5;letter-spacing:0;color:var(--fg-muted);text-wrap:pretty;max-width:78ch}
+.comment.none{padding:0;text-align:left;font-size:var(--t--1);font-style:italic;
+  font-variation-settings:"opsz" 14,"wght" 420;letter-spacing:var(--track-small);
+  color:color-mix(in oklab,var(--bone-3) 72%,transparent)}
+.empty-bucket{padding:var(--sp-3) 0 var(--sp-3) var(--sp-4);font-size:var(--t--1);
+  color:var(--fg-dim);font-style:italic}
+
+/* ============================ ACCORDION ============================ */
+.caret{display:grid;place-items:center;width:16px;height:16px;flex:none;color:var(--accent-deep);
+  transition:transform var(--dur-3) var(--ease-cine),color var(--dur-2) var(--ease-out)}
+.caret svg{width:13px;height:13px}
+[aria-expanded="true"] > .caret{transform:rotate(90deg);color:var(--brass)}
+.district-head:hover .caret,.store-head:hover .caret,.rep-head:hover .caret,
+.bucket-head:hover .caret{color:var(--brass)}
+.collapse{display:grid;grid-template-rows:0fr;
+  transition:grid-template-rows var(--dur-4) var(--ease-cine)}
+[aria-expanded="true"] + .collapse,.collapse.open{grid-template-rows:1fr}
+.collapse > .collapse-inner{overflow:hidden;min-height:0;
+  /* height:0 alone leaves the subtree focusable and readable by a screen reader.
+     visibility drops it from the tab order and the AX tree; the delayed
+     transition keeps it visible for the length of the collapse animation. */
+  visibility:hidden;transition:visibility 0s linear var(--dur-4)}
+[aria-expanded="true"] + .collapse > .collapse-inner,
+.collapse.open > .collapse-inner{visibility:visible;transition-delay:0s}
+
+/* ============================ EMPTY / FOOTER ============================ */
+.empty{padding:var(--sp-8) 0;text-align:center;color:var(--fg-dim);
+  font-family:var(--font-display);font-optical-sizing:none;
+  font-variation-settings:"opsz" 22,"wght" 440;font-size:var(--t-1);letter-spacing:var(--track-1)}
+.empty a{color:var(--brass-300);text-decoration:underline;
+  text-decoration-color:color-mix(in oklab,var(--brass) 45%,transparent);
+  text-underline-offset:.18em;text-decoration-thickness:1px}
+.empty a:hover{text-decoration-color:var(--brass-300)}
+.src{padding:var(--sp-5) 0 var(--sp-9);font-size:var(--t--2);line-height:1.6;
+  color:var(--fg-dim);letter-spacing:var(--track-small);
+  border-top:1px solid var(--line-hair)}
+
+/* ============================ REVEAL ============================ */
+/* keep the browser from laying out collapsed subtrees it isn't painting */
+.survey{content-visibility:auto;contain-intrinsic-size:auto 78px}
+.collapse[data-big]{transition:none}
+@keyframes led-in{from{opacity:0;transform:translate3d(0,10px,0)}to{opacity:1;transform:none}}
+.district{animation:led-in var(--dur-4) var(--ease-cine) both;
+  animation-delay:calc(var(--i,0) * 55ms)}
+
+/* ============================ RESPONSIVE ============================ */
+@media (max-width:1240px){
+  /* the pull-quote is the first thing to go — it is a reward, not a control */
+  .peek{display:none}
+  .district-head{grid-template-columns:auto auto minmax(20ch,1fr) auto auto auto}
+}
+@media (max-width:1000px){
+  .district-head{grid-template-columns:auto auto 1fr auto;row-gap:var(--sp-3)}
+  .district-id{max-width:none}
+  .district-head .district-id{grid-column:3;grid-row:1}
+  /* keep the meter inline at a fixed width — stretched full-bleed under the
+     name it stops reading as a scale and starts reading as an underline */
+  .district-head .meter{grid-column:3;grid-row:2;width:clamp(96px,22vw,150px);align-self:center}
+  .district-head .minis{grid-column:3;grid-row:2;justify-self:end;align-self:center}
+  .district-head .nps-badge{grid-column:4;grid-row:1/3;align-self:center}
+}
+@media (max-width:720px){
+  .mast-meta{border-left:0;padding-left:0;padding-top:var(--sp-4);
+    border-top:1px solid var(--line-hair);width:100%;
+    display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-3) var(--sp-4)}
+  .bar-in{gap:var(--sp-2);padding-block:var(--sp-2)}
+  .bar-gap{display:none}
+  .seg{flex:1 1 100%}
+  .seg button{flex:1 1 50%;padding-inline:var(--sp-2)}
+  .field{flex:1 1 calc(50% - var(--sp-1));min-width:0}
+  .field select{width:100%;max-width:none;min-height:44px}
+  .chips{flex:1 1 100%}
+  .chip{flex:1 1 0;justify-content:center;min-height:44px;padding-inline:var(--sp-2);
+    font-size:10.5px;letter-spacing:.09em}
+  .seg button{min-height:44px}
+  .tbtn{min-height:44px}
+  .bucket-head{min-height:44px;padding-block:var(--sp-3)}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .kpi{border-left:1px solid var(--line-hair);border-top:1px solid var(--line-hair)}
+  .kpi:nth-child(odd){border-left:0}
+  .kpi:nth-child(-n+2){border-top:0}
+  .kpi .val{font-size:var(--t-2)}
+  .store-head{grid-template-columns:auto 1fr auto;row-gap:var(--sp-2)}
+  .store-head .minis{grid-column:2;grid-row:2}
+  .store-head .nps-badge{grid-row:1/3;grid-column:3}
+  .rep-head{grid-template-columns:auto 1fr auto}
+  .stores,.reps,.buckets,.surveys{padding-left:var(--sp-2)}
+  .comment{font-size:var(--t--1)}
+}
+@media (max-width:420px){
+  .district-head .meter{display:none}
+  .mast-title > span{font-size:var(--t-4)}
+}
+
+/* ============================ PREFERENCES ============================ */
+@media (prefers-reduced-transparency:reduce){
+  .bar{-webkit-backdrop-filter:none;backdrop-filter:none;
+    background:color-mix(in oklab,var(--ink-950) 97%,transparent)}
+  .chip{-webkit-backdrop-filter:none;backdrop-filter:none}
+}
+@media (prefers-contrast:more){
+  :root{--fg-dim:var(--bone-2);
+    --line-soft:color-mix(in oklab,var(--bone) 30%,transparent);
+    --line-hair:color-mix(in oklab,var(--bone) 20%,transparent)}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  .district{animation:none}
+  .meter span{transition:none}
+  *,*::before,*::after{animation-duration:1ms !important;animation-delay:0ms !important;
+    animation-iteration-count:1 !important;transition-duration:1ms !important;
+    transition-delay:0ms !important}
+}
+@media print{
+  :root{--bg:#fff;--fg:#111;--fg-muted:#333;--fg-dim:#555;
+    --line-hair:#ddd;--line-soft:#ccc;--brass-600:#8a6323;--brass-300:#8a6323}
+  body{background:none;background-image:none}
+  .bar,.section-head .bulk,.skip,.peek,.meter{display:none}
+  .district,.store,.rep{content-visibility:visible;break-inside:avoid}
+  .collapse{grid-template-rows:1fr!important}
+  .collapse > .collapse-inner{overflow:visible;visibility:visible;transition-delay:0s}
+  .caret{display:none}
+  .nps-badge,.rep-hero,.score-chip{box-shadow:inset 0 0 0 1px #bbb}
+}
+@media (forced-colors:active){
+  .chip,.seg button,.tbtn,.nps-badge,.rep-hero,.score-chip{
+    forced-color-adjust:none;border:1px solid CanvasText;background:Canvas;color:CanvasText}
+  .seg button[aria-pressed="true"],.chip:hover{background:Highlight;color:HighlightText}
+}
 </style>
 </head>
 <body>
 
-<header class="appbar">
-  <div class="wrap">
-    <div class="appbar-row">
-      <div class="logo">B</div>
-      <div class="titles">
-        <h1>NPS Report</h1>
-        <p>Blufox Mobile &middot; Xfinity Retail</p>
+<a class="skip" href="#results">Skip to the districts</a>
+
+<header class="masthead">
+    <div class="wrap mast-row">
+      <div class="mast-id">
+        <div class="kicker">Blufox Mobile &middot; Xfinity Retail</div>
+        <h1 class="mast-title">
+          <span>The NPS</span>
+          <span>Index</span>
+          <span id="mastPeriod"></span>
+        </h1>
+        <p class="mast-sub">Every Medallia response, filed by <b>district</b>, then store,
+          then rep. Open a district to read what customers actually said.</p>
       </div>
-      <div class="appbar-spacer"></div>
-      <div class="updated" id="updatedAt">Loading survey data&hellip;</div>
+      <div class="mast-meta">
+        <div>
+          <div class="caps">Districts</div>
+          <div class="v" id="statDistricts">&mdash;</div>
+        </div>
+        <div>
+          <div class="caps">Stores reporting</div>
+          <div class="v" id="statStores">&mdash;</div>
+        </div>
+        <div style="grid-column:1/-1">
+          <div class="caps">Last upload</div>
+          <div class="micro" id="updatedAt" style="margin-top:6px">Loading survey data&hellip;</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+<main>
+
+  <!-- ============================= CONTROL BAR ============================= -->
+  <div class="bar">
+    <div class="wrap bar-in">
+      <div class="seg" role="group" aria-label="Reporting period">
+        <button id="tabYesterday" aria-pressed="true" onclick="setTab('yesterday')">Yesterday</button>
+        <button id="tabMtd" aria-pressed="false" onclick="setTab('mtd')">Month to Date</button>
+      </div>
+      <div class="field">
+        <select id="dmFilter" aria-label="Filter by district" onchange="render()"><option value="">All Districts</option></select>
+      </div>
+      <div class="field">
+        <select id="storeFilter" aria-label="Filter by store" onchange="render()"><option value="">All Stores</option></select>
+      </div>
+      <div class="bar-gap"></div>
+      <div class="chips" role="group" aria-label="Toggle score bands">
+        <button class="chip good" id="chipGood" aria-pressed="true" onclick="toggleBand('good')"><span class="dot"></span>Good</button>
+        <button class="chip neutral" id="chipOk" aria-pressed="true" onclick="toggleBand('ok')"><span class="dot"></span>Neutral</button>
+        <button class="chip bad" id="chipBad" aria-pressed="true" onclick="toggleBand('bad')"><span class="dot"></span>Needs Attn</button>
+      </div>
     </div>
   </div>
-</header>
 
-<main class="wrap">
+  <div class="wrap">
+    <div class="banner" id="banner" role="status" aria-live="polite"></div>
 
-  <div class="banner" id="banner"></div>
+    <section class="kpis" id="summary" aria-label="Summary metrics"></section>
 
-  <div class="controls">
-    <div class="seg" role="group" aria-label="Reporting period">
-      <button id="tabYesterday" aria-pressed="true" onclick="setTab('yesterday')">Yesterday</button>
-      <button id="tabMtd" aria-pressed="false" onclick="setTab('mtd')">Month-to-Date</button>
+    <div class="section-head">
+      <h2 id="ledgerHead">Districts &middot; Stores &middot; Reps</h2>
+      <div class="bulk">
+        <button class="tbtn" onclick="expandAll()">Expand all</button>
+        <button class="tbtn" onclick="collapseAll()">Collapse all</button>
+      </div>
     </div>
-    <div class="field">
-      <select id="storeFilter" aria-label="Filter by store" onchange="render()"><option value="">All Stores</option></select>
-    </div>
-    <div class="field">
-      <select id="dmFilter" aria-label="Filter by district manager" onchange="render()"><option value="">All DMs</option></select>
-    </div>
-    <div class="controls-spacer"></div>
-    <div class="chips" role="group" aria-label="Toggle score bands">
-      <button class="chip good" id="chipGood" aria-pressed="true" onclick="toggleBand('good')"><span class="dot"></span>Good</button>
-      <button class="chip neutral" id="chipOk" aria-pressed="true" onclick="toggleBand('ok')"><span class="dot"></span>Neutral</button>
-      <button class="chip bad" id="chipBad" aria-pressed="true" onclick="toggleBand('bad')"><span class="dot"></span>Bad</button>
-    </div>
+
+    <div id="results" role="region" aria-labelledby="ledgerHead" tabindex="-1"><div class="empty">Loading&hellip;</div></div>
+    <p class="sr-only" id="resultCount" role="status" aria-live="polite"></p>
   </div>
 
-  <section class="kpis" id="summary" aria-label="Summary metrics"></section>
-
-  <div class="section-head">
-    <h2>Stores &middot; Reps</h2>
-    <div class="bulk">
-      <button onclick="expandAll()">Expand all</button>
-      <button onclick="collapseAll()">Collapse all</button>
-    </div>
-  </div>
-
-  <div id="results"><div class="empty">Loading&hellip;</div></div>
-  <div class="src" id="src"></div>
 </main>
+
+<footer class="wrap"><div class="src" id="src"></div></footer>
 
 <script>
 // === NPS SHARED MODULE (identical copy lives in upload.html + NPS-Index---Medallia/index.html) ===
@@ -1845,6 +2347,7 @@ const bands = { good: true, ok: true, bad: true };
 
 function setTab(t){
   tab = t;
+  npsStampDateline();
   document.getElementById("tabYesterday").setAttribute("aria-pressed", String(t === "yesterday"));
   document.getElementById("tabMtd").setAttribute("aria-pressed", String(t === "mtd"));
   render();
@@ -1857,6 +2360,15 @@ function toggleBand(b){
   render();
 }
 
+// The masthead dateline: which month, and which window you are reading.
+function npsStampDateline(){
+  const mp = document.getElementById("mastPeriod");
+  if(!mp) return;
+  const d = new Date();
+  const month = d.toLocaleString("en-US", { month: "long", year: "numeric" });
+  mp.textContent = month + "  \u00B7  " + (tab === "mtd" ? "Fiscal month to date" : "Yesterday's batch");
+}
+
 function banner(msg, type){
   const el = document.getElementById("banner");
   el.className = "banner " + (type || "");
@@ -1867,12 +2379,12 @@ function dmShort(email){
   if(!email) return "";
   const map = {
     "jucarrillo@blufoxmobile.com": "Juan Carrillo",
-    "jcabrales@blufoxmobile.com": "J. Cabrales",
-    "idhorajiwala@blufoxmobile.com": "I. Dhorajiwala",
-    "mbrooks@blufoxmobile.com": "M. Brooks",
+    "jcabrales@blufoxmobile.com": "Jacob Cabrales",
+    "idhorajiwala@blufoxmobile.com": "Imaad Dhorajiwala",
+    "mbrooks@blufoxmobile.com": "Matthew Brooks",
     // Chicago West DM. Address follows the house pattern but is UNCONFIRMED —
     // if it differs, the split("@") fallback below still renders something sane.
-    "tchowdhury@blufoxmobile.com": "T. Chowdhury",
+    "tchowdhury@blufoxmobile.com": "Tanzim Chowdhury",
     "jbilbrey@blufoxmobile.com": "Jeff Bilbrey"
   };
   return map[email.toLowerCase()] || email.split("@")[0];
@@ -1895,6 +2407,75 @@ function currentSurveys(){
   return (DATA.surveys || []).filter(s => (s.txnDate || "").startsWith(monthPrefix));
 }
 
+/* ===================== DISTRICT RESOLUTION =====================
+   Districts are owned by the Admin Panel Directory
+   (blufoxmobile.github.io/Admin-Panel-Directory), which publishes two keys into
+   Daily-Sales-Report/data/store-directory.json:
+
+     districts      : [{ id, name, dm }]
+     storeDistricts : { "<Store> Xfinity Store": "<district id>" }
+
+   Those are the source of truth. Until they are published, we fall back to the
+   DM email already sitting on every store in storeDMs and name it from the table
+   below — so this page groups correctly both before and after the panel ships,
+   and a store Jeff moves between districts in the panel moves here on next load
+   with no code change. */
+const NPS_DISTRICT_NAMES = {
+  "idhorajiwala@blufoxmobile.com": "North Side",
+  "jucarrillo@blufoxmobile.com":   "South Side",
+  "jcabrales@blufoxmobile.com":    "East Side",
+  "mbrooks@blufoxmobile.com":      "Big South",
+  "tchowdhury@blufoxmobile.com":   "West Side",
+  "jbilbrey@blufoxmobile.com":     "Director"
+};
+const NPS_NO_DISTRICT = { id: "__none", name: "Unassigned", dm: "", dmName: "" };
+// Below this many surveys a district's rank is noise, not performance.
+const NPS_MIN_N = 8;
+
+// A DM's display name is a property of the person, not the store — so if this
+// store has no storeDMNames entry, borrow one from any other store they run.
+function npsDmFullName(email, fullKey){
+  if(!email) return "";
+  const names = (DIR && DIR.storeDMNames) || {};
+  const dms = (DIR && DIR.storeDMs) || {};
+  const want = email.toLowerCase();
+  // only trust this store's name if this store is actually run by `email`
+  if(fullKey && names[fullKey] && String(dms[fullKey] || "").toLowerCase() === want)
+    return names[fullKey];
+  for(const k in dms){
+    if(dms[k] && String(dms[k]).toLowerCase() === want && names[k]) return names[k];
+  }
+  return dmShort(email);
+}
+
+function npsDistrictFor(storeKey){
+  if(!storeKey || String(storeKey).indexOf("Unmatched") >= 0) return NPS_NO_DISTRICT;
+  const fullKey = storeKey + " Xfinity Store";
+  const list = (DIR && Array.isArray(DIR.districts)) ? DIR.districts : null;
+  const dm   = ((DIR && DIR.storeDMs) || {})[fullKey] || "";
+
+  // 1. explicit assignment from the Admin Panel wins
+  const assignedId = ((DIR && DIR.storeDistricts) || {})[fullKey];
+  if(list && assignedId){
+    const d = list.find(x => x && x.id === assignedId);
+    if(d) return { id: d.id, name: d.name || d.id, dm: d.dm || dm,
+                   dmName: d.dmName || npsDmFullName(d.dm || dm, fullKey) };
+  }
+  // 2. otherwise match the store's DM against a declared district
+  if(dm){
+    const want = dm.toLowerCase();
+    if(list){
+      const d = list.find(x => x && x.dm && String(x.dm).toLowerCase() === want);
+      if(d) return { id: d.id, name: d.name || d.id, dm: dm,
+                     dmName: d.dmName || npsDmFullName(dm, fullKey) };
+    }
+    // 3. last resort — one district per DM, named from the table above
+    return { id: want, name: NPS_DISTRICT_NAMES[want] || (dmShort(dm) + " — District"),
+             dm: dm, dmName: npsDmFullName(dm, fullKey) };
+  }
+  return NPS_NO_DISTRICT;
+}
+
 function render(){
   if(!DATA || !DIR) return;
   const storeF = document.getElementById("storeFilter").value;
@@ -1902,10 +2483,7 @@ function render(){
 
   let list = currentSurveys();
   if(storeF) list = list.filter(s => npsSurveyStore(s) === storeF);
-  if(dmF) list = list.filter(s => {
-    const dm = (DIR.storeDMs || {})[(npsSurveyStore(s) || "") + " Xfinity Store"] || "";
-    return dm.toLowerCase() === dmF.toLowerCase();
-  });
+  if(dmF) list = list.filter(s => npsDistrictFor(npsSurveyStore(s) || "").id === dmF);
   list = list.filter(s => bands[npsBucket(s.score)]);
 
   // summary (band filter applied so the cards match what you see)
@@ -1916,30 +2494,64 @@ function render(){
   const withComments = list.filter(s => s.comment).length;
   const cmtPct = list.length ? Math.round((withComments / list.length) * 100) : 0;
   document.getElementById("summary").innerHTML =
-    sumCard("Surveys", list.length, "", "all responses") +
-    sumCard("Good", good, "k-good", "9–10 promoters") +
-    sumCard("Neutral", ok, "k-neutral", "score of 8") +
-    sumCard("Needs Attn", bad, "k-bad", "0–7 detractors") +
+    sumCard("SURVEYS", list.length, "", "all responses") +
+    sumCard("GOOD", good, "k-good", "9–10 promoters") +
+    sumCard("NEUTRAL", ok, "k-neutral", "score of 8") +
+    sumCard("NEEDS ATTN", bad, "k-bad", "0–7 detractors") +
     sumCard("tNPS", fmtNps(tnps), "k-nps", "promoters − detractors") +
-    sumCard("With Comments", withComments, "", cmtPct + "% of surveys") +
-    bfxToGoalSummaryCard(storeF, dmF); /* BFX v1.1: MTD 9\u201310s-to-80 card */
+    sumCard("WITH COMMENTS", withComments, "", cmtPct + "% of surveys") +
+    bfxToGoalSummaryCard(storeF, dmF); /* BFX v1.1: MTD 9–10s-to-80 card */
 
-  // group by store
-  const groups = {};
+  // ---- group: survey -> store -> district ----
+  const storeGroups = {};
   list.forEach(s => {
     const k = npsSurveyStore(s) || ("⚠ Unmatched: " + s.storeRaw);
-    (groups[k] = groups[k] || []).push(s);
+    (storeGroups[k] = storeGroups[k] || []).push(s);
   });
-  const keys = Object.keys(groups).sort((a,b) => {
-    const badA = groups[a].filter(s => npsBucket(s.score) === "bad").length;
-    const badB = groups[b].filter(s => npsBucket(s.score) === "bad").length;
-    return badB - badA || a.localeCompare(b);
+  const storeKeys = Object.keys(storeGroups);
+
+  const dist = {};
+  storeKeys.forEach(k => {
+    const info = npsDistrictFor(k);
+    const bucket = dist[info.id] || (dist[info.id] = { info: info, stores: [], surveys: [] });
+    bucket.stores.push(k);
+    for(let x = 0; x < storeGroups[k].length; x++) bucket.surveys.push(storeGroups[k][x]);
   });
 
-  const out = keys.map(k => storeBlockHtml(k, groups[k])).join("");
+  // Districts rank best-first — this is a leaderboard, and the rank numeral
+  // has to mean something. Stores INSIDE a district stay worst-first, because
+  // that list is a work queue, not a scoreboard.
+  const dKeys = Object.keys(dist).sort((a, b) => {
+    if(a === "__none") return 1;
+    if(b === "__none") return -1;
+    const la = dist[a].surveys.length >= NPS_MIN_N, lb = dist[b].surveys.length >= NPS_MIN_N;
+    if(la !== lb) return la ? -1 : 1;   // don't rank a 3-survey district above a 28-survey one
+    return npsTnps(dist[b].surveys) - npsTnps(dist[a].surveys)
+        || dist[b].surveys.length - dist[a].surveys.length
+        || dist[a].info.name.localeCompare(dist[b].info.name);
+  });
+  dKeys.forEach(id => {
+    dist[id].stores.sort((a, b) => {
+      const badA = storeGroups[a].filter(s => npsBucket(s.score) === "bad").length;
+      const badB = storeGroups[b].filter(s => npsBucket(s.score) === "bad").length;
+      return badB - badA || a.localeCompare(b);
+    });
+  });
+
+  // Filtered down to one district? Open it — nobody wants to click twice.
+  const solo = dKeys.length === 1;
+  const out = dKeys.map((id, n) => districtBlockHtml(dist[id], storeGroups, n + 1, solo)).join("");
 
   document.getElementById("results").innerHTML = out ||
     '<div class="empty">No surveys match the current filters' + (tab === "yesterday" ? " in the last upload batch." : " this month.") + '</div>';
+
+  const sd = document.getElementById("statDistricts");
+  if(sd) sd.textContent = String(dKeys.length);
+  const ss = document.getElementById("statStores");
+  if(ss) ss.textContent = String(storeKeys.length);
+  const rc = document.getElementById("resultCount");
+  if(rc) rc.textContent = list.length + " surveys across " + dKeys.length +
+    " districts and " + storeKeys.length + " stores.";
 }
 
 function sumCard(lbl, val, cls, sub){
@@ -1958,7 +2570,7 @@ function npsTnps(surveys){
   return Math.round(((g - b) / surveys.length) * 100);
 }
 function npsScoreClass(v){ return v >= 30 ? "pos" : v >= 0 ? "mid" : "neg"; }
-function fmtNps(v){ return v + "%"; }  // NPS scores render as percentages (e.g. 15%) per Jeff — no +/- sign prefix on positives.
+function fmtNps(v){ return v + '<span class="pct">%</span>'; }  // NPS scores render as percentages (e.g. 15%) per Jeff — no +/- sign prefix on positives.
 function bucketChip(k){ return k === "good" ? "g" : k === "ok" ? "n" : "b"; }
 function npsTitleWord(w){ return w ? w.charAt(0).toUpperCase() + w.slice(1) : ""; }
 
@@ -2011,7 +2623,7 @@ function surveyRowHtml(s){
     '<div class="score-chip ' + chip + '">' + s.score + '</div>' +
     '<div class="survey-body">' +
       '<div class="survey-top">' + top + '</div>' +
-      '<div class="comment ' + (hasC ? '' : 'empty') + '">' +
+      '<div class="comment ' + (hasC ? '' : 'none') + '">' +
         (hasC ? '“' + npsEsc(s.comment) + '”' : 'No comment left') +
       '</div>' +
     '</div>' +
@@ -2026,10 +2638,11 @@ function bucketBlockHtml(cls, label, surveys){
     : '<div class="empty-bucket">No surveys in this band.</div>';
   return '<div class="bucket ' + cls + '">' +
     '<button class="bucket-head" aria-expanded="false" onclick="npsToggle(this)">' +
+      '<span class="caret">' + NPS_CARET + '</span>' +
       '<span class="swatch"></span>' +
       '<span class="label">' + label + '</span>' +
-      '<span class="count-pill">' + surveys.length + '</span>' +
-      '<span class="caret">' + NPS_CARET + '</span>' +
+      '<span class="count-pill" aria-label="' + surveys.length + ' survey' +
+        (surveys.length === 1 ? '' : 's') + '">' + surveys.length + '</span>' +
     '</button>' +
     '<div class="collapse"><div class="collapse-inner"><div class="surveys">' + body + '</div></div></div>' +
   '</div>';
@@ -2059,11 +2672,14 @@ function repBlockHtml(ntid, storeKey, surveys){
   const cls = npsScoreClass(tnps);
   const heroCap = (colD !== null) ? "NPS" : "tNPS";
   const who = npsRepDisplay(ntid, storeKey);
+  const srRep = who.name + ", " + heroCap + " " + tnps + ", " + surveys.length + " surveys, " +
+    g.length + " good, " + n.length + " neutral, " + b.length + " needing attention";
+
   return '<div class="rep">' +
-    '<button class="rep-head" aria-expanded="false" onclick="npsToggle(this)">' +
+    '<button class="rep-head" aria-expanded="false" aria-label="' + npsEsc(srRep) + '" onclick="npsToggle(this)">' +
       '<span class="caret">' + NPS_CARET + '</span>' +
       '<div class="rep-id">' +
-        '<span class="name">' + npsEsc(who.name) + '</span>' +
+        '<span class="name">' + npsEsc(who.name) + '</span> ' +
         (who.ntid ? '<span class="ntid">' + npsEsc(who.ntid) + '</span>' : '') +
         '<div class="meta">' +
           '<span class="tot">' + surveys.length + ' survey' + (surveys.length === 1 ? '' : 's') + '</span>' +
@@ -2072,7 +2688,7 @@ function repBlockHtml(ntid, storeKey, surveys){
           '<span class="mini b">' + b.length + ' attn</span>' +
         '</div>' +
       '</div>' +
-      '<div class="rep-hero hero-' + cls + '">' +
+      '<div class="rep-hero hero-' + cls + '" aria-hidden="true">' +
         '<div class="num">' + fmtNps(tnps) + '</div>' +
         '<div class="cap">' + heroCap + '</div>' +
       '</div>' +
@@ -2088,24 +2704,21 @@ function repBlockHtml(ntid, storeKey, surveys){
 function storeBlockHtml(storeKey, surveys){
   const fullKey = storeKey + " Xfinity Store";
   const sm = (DIR.storeManagerNames || {})[fullKey] || "";
-  const dm = dmShort((DIR.storeDMs || {})[fullKey] || "");
   const g = surveys.filter(s => npsBucket(s.score) === "good").length;
   const n = surveys.filter(s => npsBucket(s.score) === "ok").length;
   const b = surveys.filter(s => npsBucket(s.score) === "bad").length;
   const tnps = npsTnps(surveys);
-  // Store headline = the OFFICIAL store NPS pulled from the Daily Sales Report
-  // (NPS_FISCAL) whenever it's available, on both the Yesterday and Month-to-Date
-  // views so the store always reflects its real Sales-Report NPS. Only falls back
-  // to the survey-computed tNPS when no official number exists for the store yet.
+  // Store headline = the OFFICIAL store NPS from the Daily Sales Report
+  // (NPS_FISCAL) whenever it exists, on both tabs, so the store always shows its
+  // real Sales-Report number. Falls back to survey tNPS when there isn't one.
   const official = NPS_FISCAL[String(storeKey).trim().toLowerCase()];
   const headlineNps = (typeof official === "number") ? official : tnps;
   const cls = npsScoreClass(headlineNps);
-  const npsCap = "NPS";
 
   // group this store's surveys by rep (ntid)
   const repGroups = {};
   surveys.forEach(s => { const key = s.ntid || "(no rep id)"; (repGroups[key] = repGroups[key] || []).push(s); });
-  const repKeys = Object.keys(repGroups).sort((a,b2) => {
+  const repKeys = Object.keys(repGroups).sort((a, b2) => {
     const ra = repGroups[a], rb = repGroups[b2];
     const badA = ra.filter(s => npsBucket(s.score) === "bad").length;
     const badB = rb.filter(s => npsBucket(s.score) === "bad").length;
@@ -2113,30 +2726,104 @@ function storeBlockHtml(storeKey, surveys){
   });
   const repsHtml = repKeys.map(rk => repBlockHtml(rk, storeKey, repGroups[rk])).join('');
 
+  // DM is deliberately NOT repeated here — the district header above owns it.
   const metaBits = [];
-  if(sm) metaBits.push("SM: " + npsEsc(sm));
-  if(dm) metaBits.push("DM: " + npsEsc(dm));
+  if(sm) metaBits.push("SM " + npsEsc(sm));
   metaBits.push(repKeys.length + " rep" + (repKeys.length === 1 ? '' : 's'));
+  metaBits.push(surveys.length + " survey" + (surveys.length === 1 ? '' : 's'));
+  const scope = (typeof official === "number")
+    ? '<span class="scope">Fiscal MTD · Sales Report</span>' : '<span class="scope">Survey tNPS</span>';
+
+  const srStore = storeKey + ", NPS " + headlineNps + ", " + (sm ? "manager " + sm + ", " : "") +
+    repKeys.length + " reps, " + surveys.length + " surveys, " +
+    g + " good, " + n + " neutral, " + b + " needing attention";
 
   return '<div class="store">' +
-    '<button class="store-head" aria-expanded="false" onclick="npsToggle(this)">' +
+    '<button class="store-head" aria-expanded="false" aria-label="' + npsEsc(srStore) + '" onclick="npsToggle(this)">' +
       '<span class="caret">' + NPS_CARET + '</span>' +
       '<div class="store-id">' +
         '<div class="name">' + npsEsc(storeKey) + '</div>' +
-        '<div class="meta">' + metaBits.join(" · ") + '</div>' +
+        '<div class="meta">' + metaBits.join(" · ") + scope + '</div>' +
         bfxStoreGoalLineHtml(storeKey) + /* BFX v1.1: MTD surveys-to-80 pill */
       '</div>' +
-      '<div class="minis">' +
+      '<div class="minis" aria-hidden="true">' +
         '<span class="mini g">' + g + '</span>' +
         '<span class="mini n">' + n + '</span>' +
         '<span class="mini b">' + b + '</span>' +
       '</div>' +
-      '<div class="nps-badge nps-' + cls + '">' +
+      '<div class="nps-badge nps-' + cls + '" aria-hidden="true">' +
         '<div class="num">' + fmtNps(headlineNps) + '</div>' +
-        '<div class="cap">' + npsCap + '</div>' +
+        '<div class="cap">NPS</div>' +
       '</div>' +
     '</button>' +
     '<div class="collapse"><div class="collapse-inner">' + bfxDashTargetsHtml(storeKey) + '<div class="reps">' + repsHtml + '</div></div></div>' +
+  '</div>';
+}
+
+/* ===================== DISTRICT BLOCK =====================
+   The top level of the ledger. Ranked best-first, with a centre-zero meter that
+   reads tNPS as a deviation rather than a percentage bar — a district at -12
+   should look like it is under the line, not like a nearly-empty progress bar. */
+function districtBlockHtml(d, storeGroups, rank, openByDefault){
+  const sv = d.surveys;
+  const g = sv.filter(s => npsBucket(s.score) === "good").length;
+  const n = sv.filter(s => npsBucket(s.score) === "ok").length;
+  const b = sv.filter(s => npsBucket(s.score) === "bad").length;
+  const tnps = npsTnps(sv);
+  const cls = npsScoreClass(tnps);
+  const meterCls = tnps < 0 ? "neg" : (tnps >= 30 ? "pos" : "mid");
+  const width = Math.min(50, Math.abs(tnps) / 2);
+
+  const metaBits = [];
+  if(d.info.dmName) metaBits.push('<span class="dm">' + npsEsc(d.info.dmName) + '</span>');
+  metaBits.push(d.stores.length + " store" + (d.stores.length === 1 ? '' : 's'));
+  metaBits.push(sv.length + " survey" + (sv.length === 1 ? '' : 's'));
+  // Say which window this number covers. The three levels of this page show
+  // three different measures and the 11px badge caption cannot carry that.
+
+  // The sharpest thing a customer said in this district today, in the row's
+  // dead centre — the reason to read the row rather than scan it.
+  const withC = sv.filter(x => x.comment && String(x.comment).trim());
+  withC.sort((x, y) => x.score - y.score);
+  const peek = withC.length ? '\u201C' + npsEsc(String(withC[0].comment).trim()) + '\u201D' : '';
+
+  // A rank numeral is a promise that the order means something. Below the
+  // confidence floor it doesn't, and the row says so rather than pretending.
+  const thin = sv.length < NPS_MIN_N;
+  const storesHtml = d.stores.map(k => storeBlockHtml(k, storeGroups[k])).join('');
+  const open = openByDefault ? "true" : "false";
+  const sr = d.info.name + " district, rank " + rank + ", tNPS " + tnps + ", " +
+    d.stores.length + " stores, " + sv.length + " surveys, " +
+    g + " good, " + n + " neutral, " + b + " needing attention" + (thin ? ", thin sample" : "") +
+    (withC.length ? ". Lowest-scored comment: " + String(withC[0].comment).trim() : "");
+
+  return '<div class="district' + (openByDefault ? ' open' : '') + '"' +
+      (d.info.id === "__none" ? ' data-unmatched' : '') + ' style="--i:' + rank + '">' +
+    '<button class="district-head' + (thin ? ' low-n' : '') + '" aria-expanded="' + open + '"' +
+      ' aria-label="' + npsEsc(sr) + '" onclick="npsToggle(this)">' +
+      '<span class="caret">' + NPS_CARET + '</span>' +
+      '<span class="rank">' + (rank < 10 ? '0' : '') + rank + '</span>' +
+      '<div class="district-id">' +
+        '<div class="dname">' + npsEsc(d.info.name) + '</div>' +
+        '<div class="dmeta">' + metaBits.join(" · ") + '</div>' +
+      '</div>' +
+      '<div class="peek" aria-hidden="true">' + peek + '</div>' +
+      '<div class="meter" aria-hidden="true">' +
+        '<span class="' + meterCls + '" style="--w:' + width + '%"></span>' +
+      '</div>' +
+      '<div class="minis" aria-hidden="true">' +
+        '<span class="mini g">' + g + '</span>' +
+        '<span class="mini n">' + n + '</span>' +
+        '<span class="mini b">' + b + '</span>' +
+      '</div>' +
+      '<div class="nps-badge nps-' + cls + '" aria-hidden="true">' +
+        '<div class="num">' + fmtNps(tnps) + '</div>' +
+        '<div class="cap">tNPS</div>' +
+      '</div>' +
+    '</button>' +
+    '<div class="collapse' + (openByDefault ? ' open' : '') + '"><div class="collapse-inner">' +
+      '<div class="stores">' + storesHtml + '</div>' +
+    '</div></div>' +
   '</div>';
 }
 
@@ -2164,21 +2851,21 @@ function bfxDashTargetsHtml(storeKey){
 function bfxStoreGoalLineHtml(storeKey){
   if(String(storeKey).indexOf("Unmatched") >= 0) return "";
   const m = (BFX_NPSMTD.byStore || {})[String(storeKey).trim().toLowerCase()];
-  let bg = "#f8fafc", bd = "#c4cdda", fg = "#64748b", txt;
+  let cls = "neutral", txt;
   if(!m || !m.total){
-    txt = "no surveys yet this month";
+    txt = "No surveys yet this month";
   } else {
     const g = BFX.mixGoal({ goalPct: BFX.STD.NPS_GOAL, num: (m.prom || 0) - (m.det || 0), base: m.total });
     if(g.status === "hit"){
-      bg = "#ecfdf5"; bd = "#6ee7b7"; fg = "#047857";
-      txt = "\u2713 at goal \u2014 every survey counts, " + m.total + " survey" + (m.total === 1 ? "" : "s") + " MTD";
+      cls = "hit";
+      txt = "At goal — every survey counts · " + m.total + " survey" + (m.total === 1 ? "" : "s") + " MTD";
     } else {
-      bg = "#fffbeb"; bd = "#fcd34d"; fg = "#b45309";
-      txt = "MTD: " + m.total + " survey" + (m.total === 1 ? "" : "s") + " \u00b7 NPS " + Math.round(g.cur) +
-            " \u00b7 needs <b>" + g.needed + "</b> more 9\u201310s to hit " + g.goalPct;
+      cls = "behind";
+      txt = m.total + " survey" + (m.total === 1 ? "" : "s") + " MTD · NPS " + Math.round(g.cur) +
+            " · needs <b>" + g.needed + "</b> more 9–10s to hit " + g.goalPct;
     }
   }
-  return '<div style="display:inline-block;margin-top:5px;padding:3px 9px;background:' + bg + ';border:1px solid ' + bd + ';border-radius:999px;font-size:11.5px;font-weight:600;color:' + fg + ';">' + txt + '</div>';
+  return '<div class="goal-pill ' + cls + '">' + txt + '</div>';
 }
 
 /* BFX v1.1: summary-strip card — same surveys-to-goal math over whatever
@@ -2188,16 +2875,13 @@ function bfxToGoalSummaryCard(storeF, dmF){
   if(!surv) return "";
   let list = surv;
   if(storeF) list = list.filter(s => npsSurveyStore(s) === storeF);
-  if(dmF) list = list.filter(s => {
-    const dm = (DIR.storeDMs || {})[(npsSurveyStore(s) || "") + " Xfinity Store"] || "";
-    return dm.toLowerCase() === dmF.toLowerCase();
-  });
-  if(!list.length) return sumCard("9\u201310s to 80", "\u2014", "", "no surveys yet this month");
+  if(dmF) list = list.filter(s => npsDistrictFor(npsSurveyStore(s) || "").id === dmF);
+  if(!list.length) return sumCard("9–10s TO 80", "\u2014", "", "no surveys yet this month");
   let g = 0, b = 0;
   list.forEach(s => { const k = npsBucket(s.score); if(k === "good") g++; else if(k === "bad") b++; });
   const mix = BFX.mixGoal({ goalPct: BFX.STD.NPS_GOAL, num: g - b, base: list.length });
-  if(mix.status === "hit") return sumCard("9\u201310s to 80", "\u2713", "k-good", "at goal \u2014 every survey counts (" + list.length + " MTD)");
-  return sumCard("9\u201310s to 80", String(mix.needed), "k-bad", "more promoters needed \u00b7 " + list.length + " surveys MTD");
+  if(mix.status === "hit") return sumCard("9–10s TO 80", "\u2713", "k-goal", "at goal \u2014 every survey counts (" + list.length + " MTD)");
+  return sumCard("9–10s TO 80", String(mix.needed), "k-goal", "more promoters needed \u00b7 " + list.length + " surveys MTD");
 }
 
 /* ===================== ACCORDION INTERACTION (all three levels) ===================== */
@@ -2205,12 +2889,25 @@ function npsToggle(btn){
   const open = btn.getAttribute("aria-expanded") === "true";
   btn.setAttribute("aria-expanded", String(!open));
   const panel = btn.nextElementSibling;          // the sibling .collapse
+  // animating grid-template-rows relayouts the whole subtree every frame;
+  // past ~40 rows that is visible jank on an iPad, so big panels just snap.
+  if(panel && !panel.dataset.big && panel.querySelectorAll(".survey").length > 40)
+    panel.dataset.big = "1";
   if(panel) panel.classList.toggle("open", !open);
-  const card = btn.closest(".store, .rep");      // raise shadow on open
+  // A bucket head must not write its state onto the rep that contains it.
+  const card = btn.classList.contains("bucket-head")
+    ? null : btn.closest(".district, .store, .rep");
   if(card) card.classList.toggle("open", !open);
 }
 function expandAll(){
+  // districts first, then the stores inside them
+  document.querySelectorAll('#results .district > .district-head').forEach(b => {
+    if(b.getAttribute("aria-expanded") !== "true") npsToggle(b);
+  });
   document.querySelectorAll('#results .store > .store-head').forEach(b => {
+    if(b.getAttribute("aria-expanded") !== "true") npsToggle(b);
+  });
+  document.querySelectorAll('#results .rep > .rep-head').forEach(b => {
     if(b.getAttribute("aria-expanded") !== "true") npsToggle(b);
   });
 }
@@ -2250,7 +2947,7 @@ async function init(){
     if(!dirR.ok) throw new Error("store-directory.json HTTP " + dirR.status);
     DIR = await dirR.json();
     if(!dataR.ok){
-      document.getElementById("results").innerHTML = '<div class="empty">No NPS data yet — upload your first tNPS Responses export on the <a href="https://blufoxmobile.github.io/Daily-Sales-Report/upload.html" style="color:#b45309;font-weight:600;">Daily Upload page</a>.</div>';
+      document.getElementById("results").innerHTML = '<div class="empty">No NPS data yet — upload your first tNPS Responses export on the <a href="https://blufoxmobile.github.io/Daily-Sales-Report/upload.html">Daily Upload page</a>.</div>';
       document.getElementById("updatedAt").textContent = "Waiting for first upload";
       return;
     }
@@ -2285,19 +2982,32 @@ async function init(){
       const missing = stores.filter(s => !(String(s).trim().toLowerCase() in NPS_FISCAL));
       if(missing.length) console.warn("No official Fiscal NPS for: " + missing.join(", ") + " — badge will use survey tNPS.");
     }
-    const dms = Array.from(new Set(Object.values(DIR.storeDMs || {}))).sort();
-    document.getElementById("dmFilter").innerHTML = '<option value="">All DMs</option>' +
-      dms.map(d => '<option value="' + npsEsc(d) + '">' + npsEsc(dmShort(d)) + '</option>').join("");
+    // District picker, keyed by district ID — a district can hold more than one
+    // DM, so filtering on the DM email would silently drop the other DMs' stores.
+    const seenD = {}, dOpts = [];
+    Object.keys(DIR.storeDMs || {}).concat(Object.keys(DIR.storeDistricts || {}))
+      .forEach(fk => {
+        const info = npsDistrictFor(fk.replace(/ Xfinity Store$/, ""));
+        if(info.id === "__none" || seenD[info.id]) return;
+        seenD[info.id] = 1;
+        dOpts.push(info);
+      });
+    dOpts.sort((a, b) => a.name.localeCompare(b.name));
+    document.getElementById("dmFilter").innerHTML = '<option value="">All Districts</option>' +
+      dOpts.map(o => '<option value="' + npsEsc(o.id) + '">' + npsEsc(o.name) +
+        (o.dmName ? " \u2014 " + npsEsc(o.dmName) : "") + '</option>').join("");
 
     const upd = DATA.updatedAt ? new Date(DATA.updatedAt) : null;
     document.getElementById("updatedAt").textContent =
-      "Last upload: " + (upd ? upd.toLocaleString() : "unknown") +
-      " • Batch of " + (DATA.lastBatchIds || []).length + " new surveys (" + (DATA.lastBatchDate || "") + ")";
+      (upd ? upd.toLocaleString() : "unknown") +
+      " · " + (DATA.lastBatchIds || []).length + " new surveys" +
+      (DATA.lastBatchDate ? " (" + DATA.lastBatchDate + ")" : "");
     document.getElementById("src").textContent = "Source: nps-responses.json (Yesterday) • nps-mtd.json (Fiscal Month-to-Date) • store-directory.json • Daily-Sales-Report repo";
     if((DATA.unmatched || []).length){
       banner("⚠ Unmatched store IDs in last upload: " + DATA.unmatched.map(npsEsc).join("; ") +
         " — add them to NPS_STORE_NUM / NPS_STORE_ALIASES.", "error");
     }
+    npsStampDateline();
     render();
   } catch(e){
     document.getElementById("results").innerHTML = '<div class="empty">❌ ' + npsEsc(e.message) + '</div>';
