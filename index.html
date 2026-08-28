@@ -2957,7 +2957,8 @@ function districtBlockHtml(d, storeGroups, rank, openByDefault){
   if(d.info.dmName) metaBits.push('<span class="dm">' + npsEsc(d.info.dmName) + '</span>');
   metaBits.push(d.stores.length + " store" + (d.stores.length === 1 ? '' : 's'));
   metaBits.push(sv.length + " survey" + (sv.length === 1 ? '' : 's'));
-  if(score.official && score.rank) metaBits.push("company rank " + score.rank);
+  if(score.official && score.rank)
+    metaBits.push('<span title="Company-wide NPS rank among all districts">#' + score.rank + '</span>');
   const scope = '<span class="scope' + (score.official ? '' : ' derived') + '"' +
     (score.detail ? ' title="' + npsEsc(score.detail) + '"' : '') + '>' + npsEsc(score.src) + '</span>';
   // Say which window this number covers. The three levels of this page show
@@ -2965,7 +2966,12 @@ function districtBlockHtml(d, storeGroups, rank, openByDefault){
 
   // The sharpest thing a customer said in this district today, in the row's
   // dead centre — the reason to read the row rather than scan it.
-  const withC = sv.filter(x => x.comment && String(x.comment).trim());
+  const isRealComment = t => {
+    const v = String(t || "").trim();
+    if(v.length < 12) return false;                    // "1", ".", "n/a", "good"
+    return /[a-z]{3,}\s+[a-z]{2,}/i.test(v);           // at least two real words
+  };
+  const withC = sv.filter(x => isRealComment(x.comment));
   withC.sort((x, y) => x.score - y.score);
   const peek = withC.length ? '\u201C' + npsEsc(String(withC[0].comment).trim()) + '\u201D' : '';
 
