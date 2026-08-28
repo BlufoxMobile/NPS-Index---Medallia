@@ -370,6 +370,12 @@ a{color:inherit;text-decoration:none}
   transition:color var(--dur-2) var(--ease-out)}
 .district-head:hover .peek{color:var(--fg-muted)}
 .dmeta .dm{color:var(--brass-300);font-weight:600}
+.dmeta .scope{white-space:nowrap;margin-inline-start:var(--sp-2);font-size:var(--t--2);font-weight:600;
+  font-stretch:88%;text-transform:uppercase;letter-spacing:var(--track-caps);
+  margin-inline-end:calc(-1 * var(--track-caps));color:var(--brass-600)}
+.rep-id .meta .scope{margin-inline-start:var(--sp-1);font-size:var(--t--2);font-weight:600;
+  font-stretch:88%;text-transform:uppercase;letter-spacing:var(--track-caps);
+  margin-inline-end:calc(-1 * var(--track-caps));color:var(--brass-600)}
 
 /* the meter — a hairline bar, never a rounded progress pill */
 .meter{position:relative;width:clamp(96px,13vw,200px);height:2px;
@@ -425,6 +431,7 @@ a{color:inherit;text-decoration:none}
   font-variation-settings:"opsz" 24,"wght" 540;font-size:var(--t-1);
   line-height:var(--lh-snug);letter-spacing:var(--track-1);color:var(--fg)}
 .store-id .meta{margin-top:2px;font-size:var(--t--1);line-height:1.4;color:var(--fg-dim)}
+.scope.derived{color:var(--mid)}
 .store-id .meta .scope{margin-inline-start:var(--sp-2);font-size:var(--t--2);
   font-weight:600;font-stretch:88%;text-transform:uppercase;letter-spacing:var(--track-caps);
   margin-inline-end:calc(-1 * var(--track-caps));color:var(--brass-600)}
@@ -959,6 +966,9 @@ async function npsFetchDirectory(){
 
 // Reps parsed from the "Rep Rank" sheet — used to resolve NTIDs to real names.
 let NPS_REPS = [];
+// DM name (lowercased) -> { nps, rank } straight off the Sales Report's
+// "District Rank" sheet. This is the number Comcast ranks the DMs on.
+let NPS_DISTRICT = {};
 
 // Compact version of the DM-Visit-Guide "Store Rank" parser (same header regexes).
 // Also parses "Rep Rank" into NPS_REPS as a side effect (same workbook fetch).
@@ -968,6 +978,7 @@ async function npsFetchSalesStores(){
   if(!resp.ok) throw new Error("Sales report HTTP " + resp.status);
   const wb = XLSX.read(await resp.arrayBuffer(), { type: "array" });
   try { NPS_REPS = npsParseReps(wb); } catch(e){ console.warn("Rep Rank parse failed:", e); }
+  try { NPS_DISTRICT = npsParseDistrictRank(wb); } catch(e){ console.warn("District Rank parse failed:", e); }
   const ws = wb.Sheets["Store Rank"];
   if(!ws) return [];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
@@ -1048,6 +1059,52 @@ async function npsFetchSalesStores(){
 // Parse "Rep Rank" sheet → ALL reps with their MTD stats (no RSD filter, so any
 // rep who shows up on a survey can be matched). Header regexes mirror the
 // DM-Visit-Guide parser.
+/* ===================== DISTRICT RANK (Sales Report.xlsx) =====================
+   The Sales Report carries two lookalike NPS columns on every rank sheet and
+   they are NOT the same number:
+
+     "NPS%"                        -> the CURRENT fiscal period   <- we want this
+     "NPS" / "Last Month Fiscal NPS" -> last month (verified identical values)
+
+   So this matches the header text exactly and refuses to fall back to a
+   positional guess — reading the wrong one would silently show every DM last
+   month's score with no visible symptom. Returns {} rather than throwing when
+   the sheet is missing, so a Sales Report without it degrades to the store
+   roll-up instead of blanking the page. */
+function npsParseDistrictRank(wb){
+  const out = {};
+  const ws = wb.Sheets["District Rank"];
+  if(!ws) return out;
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  let hr = -1;
+  for(let i = 0; i < Math.min(20, rows.length); i++){
+    if(rows[i] && rows[i].some(c => c && String(c).trim() === "Rank")){ hr = i; break; }
+  }
+  if(hr < 0) return out;
+  const h = rows[hr].map(c => c == null ? "" : String(c).replace(/\s+/g, " ").trim());
+  const iDm   = h.findIndex(c => c.toLowerCase() === "dm");
+  const iNps  = h.findIndex(c => /^nps\s*%$/i.test(c));            // current period only
+  const iRank = h.findIndex(c => /^nps\s*rank$/i.test(c));
+  if(iDm < 0 || iNps < 0){
+    console.warn("District Rank: no DM / NPS% column — falling back to store roll-up.");
+    return out;
+  }
+  for(let i = hr + 1; i < rows.length; i++){
+    const r = rows[i];
+    if(!r || r[iDm] == null) continue;
+    const dm = String(r[iDm]).trim();
+    if(!dm) continue;
+    const raw = r[iNps];
+    if(raw == null || raw === "" || isNaN(Number(raw))) continue;   // blank cell = no number for that DM
+    const v = Number(raw);
+    out[dm.toLowerCase()] = {
+      nps: Math.round(v > 1.5 ? v : v * 100),   // tolerate 68.75 as well as 0.6875
+      rank: (iRank >= 0 && r[iRank] != null && !isNaN(Number(r[iRank]))) ? Number(r[iRank]) : null
+    };
+  }
+  return out;
+}
+
 function npsParseReps(wb){
   const ws = wb.Sheets["Rep Rank"];
   if(!ws) return [];
@@ -2361,12 +2418,27 @@ function toggleBand(b){
 }
 
 // The masthead dateline: which month, and which window you are reading.
+function npsPrettyDay(ymd){
+  if(!ymd) return "";
+  const p = String(ymd).split("-");
+  if(p.length !== 3) return String(ymd);
+  const dt = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+  return dt.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+}
 function npsStampDateline(){
   const mp = document.getElementById("mastPeriod");
   if(!mp) return;
-  const d = new Date();
-  const month = d.toLocaleString("en-US", { month: "long", year: "numeric" });
-  mp.textContent = month + "  \u00B7  " + (tab === "mtd" ? "Fiscal month to date" : "Yesterday's batch");
+  if(tab === "mtd"){
+    const w = (DATA_MTD && DATA_MTD.window) || {};
+    mp.textContent = (w.startYMD && w.endYMD)
+      ? npsPrettyDay(w.startYMD) + "  \u2013  " + npsPrettyDay(w.endYMD) + "  \u00B7  Fiscal month to date"
+      : "Fiscal month to date";
+    return;
+  }
+  // "Yesterday" is the newest day in the MTD export, which is not always
+  // literally yesterday — so print the actual date rather than implying one.
+  const day = npsLatestDay();
+  mp.textContent = day ? npsPrettyDay(day) : "Latest upload";
 }
 
 function banner(msg, type){
@@ -2390,18 +2462,47 @@ function dmShort(email){
   return map[email.toLowerCase()] || email.split("@")[0];
 }
 
+/* ===================== WHERE THE SURVEYS COME FROM =====================
+   Both tabs read nps-mtd.json — the file built from the Express Report + the
+   MTD responses export uploaded on the Daily Upload page. That is the single
+   source for every comment and every survey on this page.
+
+     Month-to-Date -> the whole MTD export (the fiscal window managers are paid on)
+     Yesterday     -> the newest transaction date present in that same export
+
+   nps-responses.json is only a fallback now, for the case where the MTD file
+   has not been uploaded yet — otherwise the page would go blank on a skipped
+   upload instead of showing something slightly stale. */
+function npsMtdSurveys(){
+  return (DATA_MTD && Array.isArray(DATA_MTD.surveys)) ? DATA_MTD.surveys : null;
+}
+// The most recent day the MTD export actually contains. This is what the
+// "Yesterday" tab shows, and it is NOT always literally yesterday — the export
+// can lag the upload. npsStampDateline() prints the real date so nobody has
+// to guess, and init() raises a banner once it falls behind.
+function npsLatestDay(){
+  const all = npsMtdSurveys();
+  if(!all) return "";
+  let max = "";
+  for(let i = 0; i < all.length; i++){
+    const d = all[i] && all[i].txnDate ? String(all[i].txnDate) : "";
+    if(d > max) max = d;
+  }
+  return max;
+}
 function currentSurveys(){
+  const all = npsMtdSurveys();
+  if(all){
+    if(tab === "mtd") return all;
+    const day = npsLatestDay();
+    return day ? all.filter(s => String(s.txnDate || "") === day) : [];
+  }
+  // ---- MTD export unavailable: fall back to the rolling responses file ----
   if(!DATA) return [];
   if(tab === "yesterday"){
     const ids = new Set(DATA.lastBatchIds || []);
     return (DATA.surveys || []).filter(s => ids.has(s.id));
   }
-  // Month-to-Date = the FISCAL month-to-date window managers are paid on.
-  // nps-mtd.json is the precomputed Fiscal MTD export (same dataset behind the
-  // Daily Sales Report's "Fiscal NPS"), so store/rep tNPS here matches pay exactly.
-  if(DATA_MTD && Array.isArray(DATA_MTD.surveys)) return DATA_MTD.surveys;
-  // Fallback only if the Fiscal MTD export is unavailable: approximate with
-  // calendar month-to-date over the rolling responses file.
   const now = new Date();
   const monthPrefix = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
   return (DATA.surveys || []).filter(s => (s.txnDate || "").startsWith(monthPrefix));
@@ -2477,7 +2578,7 @@ function npsDistrictFor(storeKey){
 }
 
 function render(){
-  if(!DATA || !DIR) return;
+  if(!DIR || (!DATA && !npsMtdSurveys())) return;
   const storeF = document.getElementById("storeFilter").value;
   const dmF = document.getElementById("dmFilter").value;
 
@@ -2498,7 +2599,7 @@ function render(){
     sumCard("GOOD", good, "k-good", "9–10 promoters") +
     sumCard("NEUTRAL", ok, "k-neutral", "score of 8") +
     sumCard("NEEDS ATTN", bad, "k-bad", "0–7 detractors") +
-    sumCard("tNPS", fmtNps(tnps), "k-nps", "promoters − detractors") +
+    sumCard("tNPS", fmtNps(tnps), "k-nps", "survey math over this view") +
     sumCard("WITH COMMENTS", withComments, "", cmtPct + "% of surveys") +
     bfxToGoalSummaryCard(storeF, dmF); /* BFX v1.1: MTD 9–10s-to-80 card */
 
@@ -2526,7 +2627,8 @@ function render(){
     if(b === "__none") return -1;
     const la = dist[a].surveys.length >= NPS_MIN_N, lb = dist[b].surveys.length >= NPS_MIN_N;
     if(la !== lb) return la ? -1 : 1;   // don't rank a 3-survey district above a 28-survey one
-    return npsTnps(dist[b].surveys) - npsTnps(dist[a].surveys)
+    // rank on the score actually displayed, so the numerals match the order
+    return npsDistrictScore(dist[b]).value - npsDistrictScore(dist[a]).value
         || dist[b].surveys.length - dist[a].surveys.length
         || dist[a].info.name.localeCompare(dist[b].info.name);
   });
@@ -2569,6 +2671,83 @@ function npsTnps(surveys){
   surveys.forEach(s => { const k = npsBucket(s.score); if(k === "good") g++; else if(k === "bad") b++; });
   return Math.round(((g - b) / surveys.length) * 100);
 }
+/* ===================== SCORE PROVENANCE =====================
+   Three levels of this page now read three different uploads, and each one
+   says so on screen. The rule: never show a number from one source under a
+   caption that implies another.
+
+     store    -> Sales Report.xlsx, "Store Rank" sheet, Fiscal NPS
+     district -> Sales Report.xlsx, "District Rank" sheet, NPS%
+     rep      -> Express Report, "SMS tNPS" (via nps-mtd.json employees[].officialTnps)
+     comments -> the MTD responses export (via nps-mtd.json surveys[])                      */
+
+// Store: the Sales Report's Fiscal NPS is the manager-pay number and always wins.
+function npsStoreScore(storeKey, surveys){
+  const official = NPS_FISCAL[String(storeKey).trim().toLowerCase()];
+  if(typeof official === "number")
+    return { value: official, cap: "NPS", src: "Sales Report", official: true };
+  return { value: npsTnps(surveys), cap: "tNPS", src: "Not in Sales Report", official: false };
+}
+
+// District: the Sales Report's own District Rank number, matched on the DM's
+// name. When that cell is blank (a DM with no rated period yet) we roll the
+// district's own store Fiscal NPS up instead of showing nothing — weighted by
+// each store's MTD response count, because an NPS is a rate and a 3-survey
+// store must not swing a 40-survey one.
+// Every store assigned to a district, from the directory — independent of
+// which stores happen to have surveys in the current view.
+function npsDistrictRoster(districtId){
+  const out = [];
+  const seen = {};
+  const push = fullKey => {
+    const short = String(fullKey).replace(/ Xfinity Store$/, "");
+    if(!short || seen[short]) return;
+    if(npsDistrictFor(short).id !== districtId) return;
+    seen[short] = 1; out.push(short);
+  };
+  Object.keys((DIR && DIR.storeDistricts) || {}).forEach(push);
+  Object.keys((DIR && DIR.storeDMs) || {}).forEach(push);
+  return out;
+}
+
+function npsDistrictScore(d){
+  const key = String(d.info.dmName || "").trim().toLowerCase();
+  const off = key ? NPS_DISTRICT[key] : null;
+  if(off && typeof off.nps === "number")
+    return { value: off.nps, cap: "NPS", src: "Sales Report", official: true, rank: off.rank };
+
+  // Roll up over EVERY store the directory assigns to this district, not just
+  // the ones with surveys in the current view — otherwise the derived number
+  // would drift between Yesterday and MTD while the official ones sit still.
+  let num = 0, den = 0, hit = 0;
+  npsDistrictRoster(d.info.id).forEach(k => {
+    const f = NPS_FISCAL[String(k).trim().toLowerCase()];
+    if(typeof f !== "number") return;
+    const m = (BFX_NPSMTD.byStore || {})[String(k).trim().toLowerCase()];
+    const w = (m && m.total) ? m.total : 1;
+    num += f * w; den += w; hit++;
+  });
+  if(hit && den)
+    return { value: Math.round(num / den), cap: "NPS", src: "Rolled up", official: false,
+             detail: "No District Rank row in the Sales Report for this DM — averaged from " + hit +
+                     " store NPS, weighted by each store's MTD response count" };
+
+  return { value: npsTnps(d.surveys), cap: "tNPS", src: "Not in Sales Report", official: false };
+}
+
+// Rep: the Express Report's SMS tNPS. When a rep's NTID could not be matched to
+// an Express row (name collisions — 8 of 140 on a typical day) we show the
+// survey-computed score under a DIFFERENT caption so the two are never confused.
+function npsRepScore(ntid, surveys){
+  const colD = npsColumnD(ntid);
+  if(colD !== null){
+    const e = (DATA_MTD && DATA_MTD.employees) ? DATA_MTD.employees[ntid] : null;
+    return { value: colD, cap: "NPS", src: "Express Report", official: true,
+             records: (e && typeof e.records === "number") ? e.records : null };
+  }
+  return { value: npsTnps(surveys), cap: "tNPS", src: "Not in Express Report", official: false, records: null };
+}
+
 function npsScoreClass(v){ return v >= 30 ? "pos" : v >= 0 ? "mid" : "neg"; }
 function fmtNps(v){ return v + '<span class="pct">%</span>'; }  // NPS scores render as percentages (e.g. 15%) per Jeff — no +/- sign prefix on positives.
 function bucketChip(k){ return k === "good" ? "g" : k === "ok" ? "n" : "b"; }
@@ -2664,15 +2843,17 @@ function repBlockHtml(ntid, storeKey, surveys){
   const g = surveys.filter(s => npsBucket(s.score) === "good");
   const n = surveys.filter(s => npsBucket(s.score) === "ok");
   const b = surveys.filter(s => npsBucket(s.score) === "bad");
-  const surveyTnps = npsTnps(surveys);
-  // Headline = the rep's Column D SMS tNPS from the Express Report; only fall
-  // back to the survey-computed tNPS when Column D isn't available for this rep.
-  const colD = npsColumnD(ntid);
-  const tnps = (colD !== null) ? colD : surveyTnps;
+  // Headline = the rep's SMS tNPS from the Express Report. When the NTID can't
+  // be matched to an Express row the survey-computed score shows instead, under
+  // a different caption and flagged in the meta line.
+  const score = npsRepScore(ntid, surveys);
+  const tnps = score.value;
   const cls = npsScoreClass(tnps);
-  const heroCap = (colD !== null) ? "NPS" : "tNPS";
+  const heroCap = score.cap;
   const who = npsRepDisplay(ntid, storeKey);
-  const srRep = who.name + ", " + heroCap + " " + tnps + ", " + surveys.length + " surveys, " +
+  const repScope = '<span class="scope' + (score.official ? '' : ' derived') + '">' +
+    npsEsc(score.src) + (score.records != null ? " · " + score.records + " records" : "") + '</span>';
+  const srRep = who.name + ", " + heroCap + " " + tnps + " from " + score.src + ", " + surveys.length + " surveys, " +
     g.length + " good, " + n.length + " neutral, " + b.length + " needing attention";
 
   return '<div class="rep">' +
@@ -2686,6 +2867,7 @@ function repBlockHtml(ntid, storeKey, surveys){
           '<span class="mini g">' + g.length + ' good</span>' +
           '<span class="mini n">' + n.length + ' ok</span>' +
           '<span class="mini b">' + b.length + ' attn</span>' +
+          repScope +
         '</div>' +
       '</div>' +
       '<div class="rep-hero hero-' + cls + '" aria-hidden="true">' +
@@ -2707,12 +2889,9 @@ function storeBlockHtml(storeKey, surveys){
   const g = surveys.filter(s => npsBucket(s.score) === "good").length;
   const n = surveys.filter(s => npsBucket(s.score) === "ok").length;
   const b = surveys.filter(s => npsBucket(s.score) === "bad").length;
-  const tnps = npsTnps(surveys);
-  // Store headline = the OFFICIAL store NPS from the Daily Sales Report
-  // (NPS_FISCAL) whenever it exists, on both tabs, so the store always shows its
-  // real Sales-Report number. Falls back to survey tNPS when there isn't one.
-  const official = NPS_FISCAL[String(storeKey).trim().toLowerCase()];
-  const headlineNps = (typeof official === "number") ? official : tnps;
+  // Store headline = the Sales Report's Fiscal NPS — the manager-pay number.
+  const score = npsStoreScore(storeKey, surveys);
+  const headlineNps = score.value;
   const cls = npsScoreClass(headlineNps);
 
   // group this store's surveys by rep (ntid)
@@ -2731,10 +2910,9 @@ function storeBlockHtml(storeKey, surveys){
   if(sm) metaBits.push("SM " + npsEsc(sm));
   metaBits.push(repKeys.length + " rep" + (repKeys.length === 1 ? '' : 's'));
   metaBits.push(surveys.length + " survey" + (surveys.length === 1 ? '' : 's'));
-  const scope = (typeof official === "number")
-    ? '<span class="scope">Fiscal MTD · Sales Report</span>' : '<span class="scope">Survey tNPS</span>';
+  const scope = '<span class="scope' + (score.official ? '' : ' derived') + '">' + npsEsc(score.src) + '</span>';
 
-  const srStore = storeKey + ", NPS " + headlineNps + ", " + (sm ? "manager " + sm + ", " : "") +
+  const srStore = storeKey + ", " + score.cap + " " + headlineNps + " from " + score.src + ", " + (sm ? "manager " + sm + ", " : "") +
     repKeys.length + " reps, " + surveys.length + " surveys, " +
     g + " good, " + n + " neutral, " + b + " needing attention";
 
@@ -2753,7 +2931,7 @@ function storeBlockHtml(storeKey, surveys){
       '</div>' +
       '<div class="nps-badge nps-' + cls + '" aria-hidden="true">' +
         '<div class="num">' + fmtNps(headlineNps) + '</div>' +
-        '<div class="cap">NPS</div>' +
+        '<div class="cap">' + score.cap + '</div>' +
       '</div>' +
     '</button>' +
     '<div class="collapse"><div class="collapse-inner">' + bfxDashTargetsHtml(storeKey) + '<div class="reps">' + repsHtml + '</div></div></div>' +
@@ -2769,7 +2947,8 @@ function districtBlockHtml(d, storeGroups, rank, openByDefault){
   const g = sv.filter(s => npsBucket(s.score) === "good").length;
   const n = sv.filter(s => npsBucket(s.score) === "ok").length;
   const b = sv.filter(s => npsBucket(s.score) === "bad").length;
-  const tnps = npsTnps(sv);
+  const score = npsDistrictScore(d);
+  const tnps = score.value;
   const cls = npsScoreClass(tnps);
   const meterCls = tnps < 0 ? "neg" : (tnps >= 30 ? "pos" : "mid");
   const width = Math.min(50, Math.abs(tnps) / 2);
@@ -2778,6 +2957,9 @@ function districtBlockHtml(d, storeGroups, rank, openByDefault){
   if(d.info.dmName) metaBits.push('<span class="dm">' + npsEsc(d.info.dmName) + '</span>');
   metaBits.push(d.stores.length + " store" + (d.stores.length === 1 ? '' : 's'));
   metaBits.push(sv.length + " survey" + (sv.length === 1 ? '' : 's'));
+  if(score.official && score.rank) metaBits.push("company rank " + score.rank);
+  const scope = '<span class="scope' + (score.official ? '' : ' derived') + '"' +
+    (score.detail ? ' title="' + npsEsc(score.detail) + '"' : '') + '>' + npsEsc(score.src) + '</span>';
   // Say which window this number covers. The three levels of this page show
   // three different measures and the 11px badge caption cannot carry that.
 
@@ -2792,7 +2974,7 @@ function districtBlockHtml(d, storeGroups, rank, openByDefault){
   const thin = sv.length < NPS_MIN_N;
   const storesHtml = d.stores.map(k => storeBlockHtml(k, storeGroups[k])).join('');
   const open = openByDefault ? "true" : "false";
-  const sr = d.info.name + " district, rank " + rank + ", tNPS " + tnps + ", " +
+  const sr = d.info.name + " district, rank " + rank + ", " + score.cap + " " + tnps + " from " + (score.detail || score.src) + ", " +
     d.stores.length + " stores, " + sv.length + " surveys, " +
     g + " good, " + n + " neutral, " + b + " needing attention" + (thin ? ", thin sample" : "") +
     (withC.length ? ". Lowest-scored comment: " + String(withC[0].comment).trim() : "");
@@ -2805,7 +2987,7 @@ function districtBlockHtml(d, storeGroups, rank, openByDefault){
       '<span class="rank">' + (rank < 10 ? '0' : '') + rank + '</span>' +
       '<div class="district-id">' +
         '<div class="dname">' + npsEsc(d.info.name) + '</div>' +
-        '<div class="dmeta">' + metaBits.join(" · ") + '</div>' +
+        '<div class="dmeta">' + metaBits.join(" · ") + scope + '</div>' +
       '</div>' +
       '<div class="peek" aria-hidden="true">' + peek + '</div>' +
       '<div class="meter" aria-hidden="true">' +
@@ -2818,7 +3000,7 @@ function districtBlockHtml(d, storeGroups, rank, openByDefault){
       '</div>' +
       '<div class="nps-badge nps-' + cls + '" aria-hidden="true">' +
         '<div class="num">' + fmtNps(tnps) + '</div>' +
-        '<div class="cap">tNPS</div>' +
+        '<div class="cap">' + score.cap + '</div>' +
       '</div>' +
     '</button>' +
     '<div class="collapse' + (openByDefault ? ' open' : '') + '"><div class="collapse-inner">' +
@@ -2937,6 +3119,35 @@ async function resendEmails(){
   } finally { btn.disabled = false; }
 }
 
+/* The page is only as current as the last upload. Rather than quietly showing
+   stale numbers under a confident-looking badge, say which file is behind. */
+function npsFreshnessBanner(){
+  const today = npsLocalYMD(new Date());
+  const yest = npsLocalYMD(new Date(Date.now() - 86400000));
+  const msgs = [];
+
+  if(!DATA_MTD){
+    msgs.push("The MTD export hasn't loaded — showing the rolling responses file instead, so comments and rep scores may be behind.");
+  } else {
+    const end = (DATA_MTD.window && DATA_MTD.window.endYMD) || "";
+    if(end && end < yest)
+      msgs.push("Newest survey in the MTD export is <b>" + npsEsc(npsPrettyDay(end)) + "</b> — upload today's Express Report and MTD files to bring this current.");
+  }
+
+  const sales = NPS_FRESH["data/Sales Report.xlsx"];
+  if(sales && sales.date && sales.date < today)
+    msgs.push("Sales Report.xlsx was last uploaded <b>" + npsEsc(sales.date) + "</b> — store and district NPS are from that file.");
+
+  if(!Object.keys(NPS_DISTRICT).length)
+    msgs.push("No District Rank sheet found in the Sales Report — district scores are rolled up from store NPS.");
+
+  const unmatched = (DATA_MTD && DATA_MTD.unmatched) || (DATA && DATA.unmatched) || [];
+  if(unmatched.length)
+    msgs.push("Unmatched store IDs in the last upload: " + unmatched.map(npsEsc).join("; "));
+
+  if(msgs.length) banner(msgs.join("<br>"), "info");
+}
+
 async function init(){
   try {
     const [dataR, dirR, mtdR] = await Promise.all([
@@ -2946,13 +3157,16 @@ async function init(){
     ]);
     if(!dirR.ok) throw new Error("store-directory.json HTTP " + dirR.status);
     DIR = await dirR.json();
-    if(!dataR.ok){
-      document.getElementById("results").innerHTML = '<div class="empty">No NPS data yet — upload your first tNPS Responses export on the <a href="https://blufoxmobile.github.io/Daily-Sales-Report/upload.html">Daily Upload page</a>.</div>';
+    // nps-mtd.json (Express Report + MTD export) is the primary file — every
+    // survey, comment and rep score on this page comes out of it.
+    try { if(mtdR && mtdR.ok) DATA_MTD = await mtdR.json(); } catch(e){ DATA_MTD = null; }
+    // the rolling responses file is optional now; it only backstops a missing MTD upload
+    try { if(dataR && dataR.ok) DATA = await dataR.json(); } catch(e){ DATA = null; }
+    if(!DATA_MTD && !DATA){
+      document.getElementById("results").innerHTML = '<div class="empty">No NPS data yet — upload the Express Report and MTD files on the <a href="https://blufoxmobile.github.io/Daily-Sales-Report/upload.html">Daily Upload page</a>.</div>';
       document.getElementById("updatedAt").textContent = "Waiting for first upload";
       return;
     }
-    DATA = await dataR.json();
-    try { if(mtdR && mtdR.ok) DATA_MTD = await mtdR.json(); } catch(e){ DATA_MTD = null; }
     // Official per-store Fiscal NPS — the exact number managers are paid on,
     // read from the same Sales Report.xlsx the Daily Sales Report displays.
     try {
@@ -2997,16 +3211,16 @@ async function init(){
       dOpts.map(o => '<option value="' + npsEsc(o.id) + '">' + npsEsc(o.name) +
         (o.dmName ? " \u2014 " + npsEsc(o.dmName) : "") + '</option>').join("");
 
-    const upd = DATA.updatedAt ? new Date(DATA.updatedAt) : null;
-    document.getElementById("updatedAt").textContent =
-      (upd ? upd.toLocaleString() : "unknown") +
-      " · " + (DATA.lastBatchIds || []).length + " new surveys" +
-      (DATA.lastBatchDate ? " (" + DATA.lastBatchDate + ")" : "");
-    document.getElementById("src").textContent = "Source: nps-responses.json (Yesterday) • nps-mtd.json (Fiscal Month-to-Date) • store-directory.json • Daily-Sales-Report repo";
-    if((DATA.unmatched || []).length){
-      banner("⚠ Unmatched store IDs in last upload: " + DATA.unmatched.map(npsEsc).join("; ") +
-        " — add them to NPS_STORE_NUM / NPS_STORE_ALIASES.", "error");
-    }
+    const mtdUpd = (DATA_MTD && DATA_MTD.updatedAt) ? new Date(DATA_MTD.updatedAt) : null;
+    const mtdCount = npsMtdSurveys() ? npsMtdSurveys().length : 0;
+    document.getElementById("updatedAt").textContent = mtdUpd
+      ? mtdUpd.toLocaleString() + " · " + mtdCount + " surveys in the MTD export"
+      : ((DATA && DATA.updatedAt) ? new Date(DATA.updatedAt).toLocaleString() + " · responses file only" : "unknown");
+    document.getElementById("src").innerHTML =
+      "<b>Store NPS</b> and <b>District NPS</b> read from Sales Report.xlsx — the Store Rank sheet's Fiscal NPS and the District Rank sheet's NPS%. " +
+      "<b>Rep scores</b> read from the Express Report's SMS tNPS. <b>Surveys and comments</b> read from the MTD export. " +
+      "All three are the files uploaded on the Daily Upload page; nothing on this page is computed from anything else unless a row says so.";
+    npsFreshnessBanner();
     npsStampDateline();
     render();
   } catch(e){
