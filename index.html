@@ -8,7 +8,16 @@
 <meta name="theme-color" content="#05070a">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Perf (2026-09-02): `defer` so the 316 KB SheetJS download no longer blocks
+     parsing (a hung cdnjs used to leave this page blank) and the JSON fetches
+     in init() start in parallel with it. npsXlsxReady() waits for
+     DOMContentLoaded before any XLSX.read. -->
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Perf (2026-09-02): moved out of the <style> @import below. An @import
+     inside the page's own stylesheet is render-blocking AND only discovered
+     after the stylesheet is parsed; as a <link> with media="print" + onload
+     swap it can never hold up first paint. Same URL, same fonts. -->
+<link href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,300..700;1,62..125,300..700&family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
 /* ============================================================================
    NPS INDEX — visual system
@@ -17,7 +26,7 @@
    cookcountycooks.com/assets/theme.css so the two pages read as one building.
    Signal colours reuse the site's own LCD / amber / alert, not stock chart RGB.
    ========================================================================= */
-@import url('https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,300..700;1,62..125,300..700&family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..700&display=swap');
+/* (Google Fonts @import moved to a non-blocking <link> in <head>, 2026-09-02) */
 
 :root{
   /* --- ground ------------------------------------------------------------ */
@@ -784,7 +793,30 @@ const NPS_CONFIG = {
 // minutes after an upload. NPS_FRESH records the commit date for the readiness gate.
 const NPS_FRESH = {};
 function npsLocalYMD(d){ d = d || new Date(); const z = n => String(n).padStart(2,"0"); return d.getFullYear() + "-" + z(d.getMonth()+1) + "-" + z(d.getDate()); }
+// Perf (2026-09-02): the api.github.com lookup is unauthenticated - 60 calls
+// per hour per IP, and every iPad in a store shares that IP. Two lookups per
+// open (Sales Report + target-summary) meant the API 403'd after ~30 opens
+// and every later open fell back to the un-pinned raw URL. The SHA is now
+// remembered in sessionStorage for 5 minutes, so repeat opens/reloads in the
+// same tab skip the API call (and its round-trip on the critical path)
+// entirely; NPS_FRESH is filled from the cache so the freshness banner and
+// the readiness gate behave exactly as before.
+const NPS_PIN_TTL_MS = 5 * 60 * 1000;
+function npsPinCacheGet(key){
+  try {
+    const v = JSON.parse(sessionStorage.getItem(key) || "null");
+    if(v && v.sha && (Date.now() - v.at) < NPS_PIN_TTL_MS) return v;
+  } catch(e){}
+  return null;
+}
+function npsPinCacheSet(key, sha, date){ try { sessionStorage.setItem(key, JSON.stringify({ sha: sha, date: date, at: Date.now() })); } catch(e){} }
 async function npsPinnedUrl(repo, path){
+  const cacheKey = "nps-pin:" + repo + "/" + path;
+  const cached = npsPinCacheGet(cacheKey);
+  if(cached){
+    NPS_FRESH[path] = { sha: cached.sha, date: cached.date };
+    return "https://raw.githubusercontent.com/BlufoxMobile/" + repo + "/" + cached.sha + "/" + path.split("/").map(encodeURIComponent).join("/");
+  }
   try {
     const api = "https://api.github.com/repos/BlufoxMobile/" + repo + "/commits?path=" + encodeURIComponent(path) + "&per_page=1&_=" + Date.now();
     const r = await fetch(api, { cache: "no-store", headers: { "Accept": "application/vnd.github+json" } });
@@ -793,11 +825,20 @@ async function npsPinnedUrl(repo, path){
       if(j && j[0] && j[0].sha){
         const iso = j[0].commit && j[0].commit.committer && j[0].commit.committer.date;
         NPS_FRESH[path] = { sha: j[0].sha, date: iso ? npsLocalYMD(new Date(iso)) : null };
+        npsPinCacheSet(cacheKey, j[0].sha, NPS_FRESH[path].date);
         return "https://raw.githubusercontent.com/BlufoxMobile/" + repo + "/" + j[0].sha + "/" + path.split("/").map(encodeURIComponent).join("/");
       }
     }
   } catch(e){ console.warn("pin lookup failed:", repo, path, e); }
   return null;
+}
+// Perf (2026-09-02): SheetJS is a deferred script now (see <head>). Deferred
+// scripts run while readyState is already "interactive" and DOMContentLoaded
+// fires after they finish, so wait for DOMContentLoaded (or load, if the CDN
+// script failed and DOMContentLoaded already went by) before any XLSX.read.
+async function npsXlsxReady(){
+  if(typeof XLSX === "undefined" && document.readyState !== "complete")
+    await new Promise(r => { document.addEventListener("DOMContentLoaded", r, { once: true }); window.addEventListener("load", r, { once: true }); });
 }
 
 // Store-number → short store name (numbers observed in the tNPS "Store ID" column BE).
@@ -976,6 +1017,7 @@ async function npsFetchSalesStores(){
   const salesUrl = (await npsPinnedUrl("Daily-Sales-Report","data/Sales Report.xlsx")) || NPS_CONFIG.NPS_SALES_REPORT_URL;
   const resp = await fetch(salesUrl + "?t=" + Date.now(), {cache:"no-store"});
   if(!resp.ok) throw new Error("Sales report HTTP " + resp.status);
+  await npsXlsxReady(); // Perf (2026-09-02): deferred SheetJS
   const wb = XLSX.read(await resp.arrayBuffer(), { type: "array" });
   try { NPS_REPS = npsParseReps(wb); } catch(e){ console.warn("Rep Rank parse failed:", e); }
   try { NPS_DISTRICT = npsParseDistrictRank(wb); } catch(e){ console.warn("District Rank parse failed:", e); }
@@ -1208,6 +1250,7 @@ async function npsFetchPunches(){
   const purl = (await npsPinnedUrl("Auto-Punch-Report","data/punch-data.xlsx")) || NPS_PUNCH_URL;
   const resp = await fetch(purl + "?t=" + Date.now(), { cache: "no-store" });
   if(!resp.ok) throw new Error("Punch data HTTP " + resp.status);
+  await npsXlsxReady(); // Perf (2026-09-02): deferred SheetJS
   const wb = XLSX.read(await resp.arrayBuffer(), { type: "array", cellDates: true });
   const sn = wb.SheetNames.find(s => /punch.?status/i.test(s))
           || wb.SheetNames.find(s => /break.*compliance/i.test(s))
@@ -1496,6 +1539,7 @@ async function npsFetchConversion(){
     const resp = await fetch(purl + "?t=" + Date.now(), { cache: "no-store" });
     if(resp.ok){
       const buf = await resp.arrayBuffer();
+      await npsXlsxReady(); // Perf (2026-09-02): deferred SheetJS
       const wb = XLSX.read(new Uint8Array(buf), { type: "array" });
       const conv = {};
       const zs = wb.Sheets["Zero"];
