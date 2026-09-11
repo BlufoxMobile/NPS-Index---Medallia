@@ -1217,29 +1217,202 @@ function npsShortFromRaw(raw){
   return npsMapStore(raw) || npsMapStore(stripped) || (stripped || null);
 }
 
-// T-Sheet Submissions feed → MTD t-chart counts by store + by rep.
-async function npsFetchTSheets(){
-  const resp = await fetch(NPS_CONFIG.TSHEET_URL + "?_=" + Date.now(), { cache: "no-store" });
-  if(!resp.ok) throw new Error("T-Sheet HTTP " + resp.status);
-  const data = await resp.json();
-  if(!data || !data.success || !Array.isArray(data.submissions)) throw new Error("T-Sheet payload malformed");
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-  const byStore = {}, byRep = {};
-  let total = 0;
-  for(const s of data.submissions){
-    const ts = Date.parse(s.timestamp);
-    if(!isFinite(ts) || ts < startOfMonth) continue;
-    total++;
-    const shortName = npsShortFromRaw(s.store);
-    if(shortName) byStore[shortName] = (byStore[shortName] || 0) + 1;
-    const rep = String(s.rep_name || "").trim().toLowerCase();
-    if(rep && shortName){
-      const key = rep + "||" + shortName.toLowerCase();
-      byRep[key] = (byRep[key] || 0) + 1;
+// ===== T-SHEETS: one fetch, retried, with a snapshot fallback =====================
+// The t-sheet numbers in the morning briefing used to come from ONE unguarded
+// fetch of the 2.8 MB Apps Script feed. When that single request failed (the feed
+// 404s / serves HTML / times out intermittently), the .catch() swallowed it and
+// every store tile and every rep's T-CH cell rendered 0 - which is exactly what
+// went out on 9/10 and 9/11 while "Yesterday's Conversion", fetching the same feed
+// a few seconds later, still showed real numbers. So now:
+//   1. both consumers share ONE feed request per run (half the load on the script),
+//   2. that request is retried with a timeout and never accepts a zero-row read,
+//   3. if the feed still fails, the numbers come from data/tsheet-counts.json -
+//      the file the Build t-sheet counts Action writes for the T-Sheet Submissions
+//      dashboard, the quote sheets and the 12/3/6 digest,
+//   4. and if BOTH fail, the email shows a dash, never a made-up 0.
+// MTD is counted on the fiscal 22nd-21st cycle, the same window the T-Sheet
+// Submissions dashboard uses, so the email and the dashboard show the same number.
+const NPS_TSHEET_COUNTS_PATH = "data/tsheet-counts.json";
+const NPS_TSHEET_COUNTS_URL  = "https://raw.githubusercontent.com/BlufoxMobile/Daily-Sales-Report/main/data/tsheet-counts.json";
+const NPS_TSHEET_MEMO_MS = 5 * 60 * 1000;
+
+// Fiscal t-sheet cycle containing `now`: the 22nd through the 21st of the next month.
+function npsTSheetCycle(now){
+  now = now || new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const start = now.getDate() >= 22 ? new Date(y, m, 22) : new Date(y, m - 1, 22);
+  const end = new Date(start.getFullYear(), start.getMonth() + 1, 21);
+  const today = new Date(y, m, now.getDate());
+  const days = Math.round((end - start) / 86400000) + 1;
+  const dayNum = Math.round((today - start) / 86400000) + 1;
+  const M = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return {
+    startYMD: npsLocalYMD(start), endYMD: npsLocalYMD(end), days: days,
+    elapsed: Math.min(1, Math.max(0, dayNum / days)), daysLeft: Math.max(0, days - dayNum),
+    label: M[start.getMonth()] + " " + start.getDate() + " &ndash; " + M[end.getMonth()] + " " + end.getDate()
+  };
+}
+
+let NPS_TSHEET_FEED = null;   // { at, promise } - shared by npsFetchTSheets + npsFetchConversion
+function npsTSheetFeed(){
+  if(NPS_TSHEET_FEED && (Date.now() - NPS_TSHEET_FEED.at) < NPS_TSHEET_MEMO_MS) return NPS_TSHEET_FEED.promise;
+  const memo = { at: Date.now(), promise: null };
+  memo.promise = npsFetchTSheetFeedRaw().catch(e => { if(NPS_TSHEET_FEED === memo) NPS_TSHEET_FEED = null; throw e; });
+  NPS_TSHEET_FEED = memo;
+  return memo.promise;
+}
+
+async function npsFetchTSheetFeedRaw(){
+  const TRIES = 2, TIMEOUT_MS = 45000;
+  let lastErr = null;
+  for(let attempt = 1; attempt <= TRIES; attempt++){
+    const ctl = (typeof AbortController !== "undefined") ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), TIMEOUT_MS) : null;
+    try {
+      const resp = await fetch(NPS_CONFIG.TSHEET_URL + "?_=" + Date.now(), { cache: "no-store", signal: ctl ? ctl.signal : undefined });
+      if(!resp.ok) throw new Error("T-Sheet HTTP " + resp.status);
+      const txt = await resp.text();
+      let data = null;
+      try { data = JSON.parse(txt); } catch(e){ throw new Error("T-Sheet feed returned non-JSON: " + txt.slice(0, 80).replace(/\s+/g, " ")); }
+      if(!data || !data.success || !Array.isArray(data.submissions)) throw new Error("T-Sheet payload malformed" + (data && data.error ? " (" + data.error + ")" : ""));
+      if(!data.submissions.length) throw new Error("T-Sheet feed returned zero rows");
+      return data.submissions;
+    } catch(e){
+      lastErr = e;
+      console.warn("T-Sheet feed attempt " + attempt + "/" + TRIES + " failed:", e);
+      if(attempt < TRIES) await new Promise(r => setTimeout(r, 3000 * attempt));
+    } finally {
+      if(timer) clearTimeout(timer);
     }
   }
-  NPS_TCHARTS = { byStore: byStore, byRep: byRep, total: total, loaded: true };
+  throw lastErr || new Error("T-Sheet feed unavailable");
+}
+
+let NPS_TSHEET_SNAP = null;   // { at, promise }
+function npsFetchTSheetSnapshot(){
+  if(NPS_TSHEET_SNAP && (Date.now() - NPS_TSHEET_SNAP.at) < NPS_TSHEET_MEMO_MS) return NPS_TSHEET_SNAP.promise;
+  const memo = { at: Date.now(), promise: null };
+  memo.promise = (async () => {
+    const url = (await npsPinnedUrl("Daily-Sales-Report", NPS_TSHEET_COUNTS_PATH)) || NPS_TSHEET_COUNTS_URL;
+    const r = await fetch(url + (url.indexOf("?") === -1 ? "?t=" : "&t=") + Date.now(), { cache: "no-store" });
+    if(!r.ok) throw new Error("tsheet-counts.json HTTP " + r.status);
+    const j = await r.json();
+    if(!j || !j.stores || typeof j.stores !== "object" || !Object.keys(j.stores).length) throw new Error("tsheet-counts.json has no stores");
+    return j;
+  })().catch(e => { if(NPS_TSHEET_SNAP === memo) NPS_TSHEET_SNAP = null; throw e; });
+  NPS_TSHEET_SNAP = memo;
+  return memo.promise;
+}
+
+// Typed rep names on the quote sheets drift from the Rep Rank spelling
+// ("Connor Mcllwain" / Connor McIlwain, "Jamie" / Jaime, "Chris" / Christopher,
+// "Tyrone Wilson Jr." / "Tyrone Wilson jr"). Exact match first; a close spelling
+// only counts when it points at exactly ONE rep on that store's roster, so two
+// real people with similar names can never have their t-sheets merged.
+function npsNameNorm(s){
+  return String(s == null ? "" : s).toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z\s'-]/g, " ").replace(/['-]/g, " ")
+    .replace(/\b(jr|sr|ii|iii|iv)\b/g, " ")
+    .replace(/\s+/g, " ").trim();
+}
+function npsOsaDist(a, b){
+  const m = a.length, n = b.length;
+  if(Math.abs(m - n) > 2) return 3;
+  const d = [];
+  for(let i = 0; i <= m; i++){ d[i] = [i]; }
+  for(let j = 0; j <= n; j++){ d[0][j] = j; }
+  for(let i = 1; i <= m; i++){
+    for(let j = 1; j <= n; j++){
+      const cost = a[i-1] === b[j-1] ? 0 : 1;
+      d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost);
+      if(i > 1 && j > 1 && a[i-1] === b[j-2] && a[i-2] === b[j-1]) d[i][j] = Math.min(d[i][j], d[i-2][j-2] + 1);
+    }
+  }
+  return d[m][n];
+}
+function npsNamesClose(rosterNorm, typedNorm){
+  const a = rosterNorm.split(" "), b = typedNorm.split(" ");
+  if(a.length < 2 || b.length < 2) return false;
+  const af = a[0], bf = b[0], al = a[a.length-1], bl = b[b.length-1];
+  const short = (x, y) => Math.min(x.length, y.length);
+  const firstOk = af === bf
+    || (short(af, bf) >= 3 && (af.indexOf(bf) === 0 || bf.indexOf(af) === 0))
+    || (short(af, bf) >= 5 && npsOsaDist(af, bf) <= 1);
+  const lastOk = al === bl
+    || (short(al, bl) >= 4 && npsOsaDist(al, bl) <= 1)
+    || (short(al, bl) >= 7 && npsOsaDist(al, bl) <= 2);
+  return firstOk && lastOk;
+}
+// Rep Rank roster names for one store -> { lowercased roster name: t-sheet count }.
+function npsTcByRoster(shortName, rosterNames){
+  const typed = ((NPS_TCHARTS.repsByStore || {})[String(shortName).trim().toLowerCase()]) || {};
+  const roster = (rosterNames || []).map(nm => ({ key: String(nm).trim().toLowerCase(), norm: npsNameNorm(nm), n: 0 }));
+  const leftovers = [];
+  Object.keys(typed).forEach(raw => {
+    const norm = npsNameNorm(raw);
+    if(!norm) return;
+    const exact = roster.filter(x => x.norm === norm);
+    if(exact.length === 1) exact[0].n += typed[raw];
+    else if(!exact.length) leftovers.push({ norm: norm, n: typed[raw] });
+  });
+  leftovers.forEach(e => {
+    const close = roster.filter(x => x.norm && npsNamesClose(x.norm, e.norm));
+    if(close.length === 1) close[0].n += e.n;
+  });
+  const out = {};
+  roster.forEach(x => { out[x.key] = (out[x.key] || 0) + x.n; });
+  return out;
+}
+
+// T-Sheet Submissions -> fiscal-MTD t-sheet counts by store + by typed rep name.
+// Throws only when neither the live feed nor the counts snapshot can be read, and
+// in that case leaves NPS_TCHARTS.loaded false so the email shows a dash.
+async function npsFetchTSheets(){
+  const cyc = npsTSheetCycle();
+  const byStore = {}, byRep = {}, repsByStore = {};
+  let total = 0, source = "";
+  const add = (shortName, rep, n) => {
+    byStore[shortName] = (byStore[shortName] || 0) + n;
+    total += n;
+    rep = String(rep == null ? "" : rep).trim();
+    if(!rep) return;
+    const sk = shortName.toLowerCase(), rk = rep.toLowerCase();
+    byRep[rk + "||" + sk] = (byRep[rk + "||" + sk] || 0) + n;
+    const m = repsByStore[sk] || (repsByStore[sk] = {});
+    m[rep] = (m[rep] || 0) + n;
+  };
+  try {
+    const subs = await npsTSheetFeed();
+    for(const s of subs){
+      const ts = Date.parse(s && s.timestamp);
+      if(!isFinite(ts)) continue;
+      const ymd = npsLocalYMD(new Date(ts));
+      if(ymd < cyc.startYMD || ymd > cyc.endYMD) continue;
+      const shortName = npsShortFromRaw(s.store);
+      if(shortName) add(shortName, s.rep_name, 1);
+    }
+    source = "live feed";
+  } catch(feedErr){
+    NPS_TCHARTS = { byStore: {}, byRep: {}, repsByStore: {}, total: 0, loaded: false, source: "", cycle: cyc };
+    const snap = await npsFetchTSheetSnapshot().catch(e => { throw new Error("T-Sheet feed failed (" + feedErr.message + ") and tsheet-counts.json is unavailable (" + e.message + ")"); });
+    if(snap.cycle_start !== cyc.startYMD) throw new Error("T-Sheet feed failed (" + feedErr.message + ") and tsheet-counts.json is for another cycle (" + snap.cycle_start + ")");
+    const snapAge = Date.now() - Date.parse(snap.generated_at || "");
+    if(!(snapAge < 36 * 3600 * 1000)) throw new Error("T-Sheet feed failed (" + feedErr.message + ") and tsheet-counts.json is too old to trust (" + snap.generated_at + ")");
+    Object.keys(snap.stores).forEach(full => {
+      const shortName = npsShortFromRaw(full);
+      const st = snap.stores[full] || {};
+      if(!shortName) return;
+      const reps = st.reps || {};
+      let repSum = 0;
+      Object.keys(reps).forEach(rep => { const n = Number(reps[rep] && reps[rep].mtd) || 0; if(n){ add(shortName, rep, n); repSum += n; } });
+      const rest = (Number(st.mtd) || 0) - repSum;
+      if(rest > 0) add(shortName, "", rest);
+    });
+    source = "tsheet-counts.json snapshot (" + (snap.generated_at || "unknown time") + ")";
+    console.warn("T-Sheet feed failed; using " + source + ":", feedErr);
+  }
+  NPS_TCHARTS = { byStore: byStore, byRep: byRep, repsByStore: repsByStore, total: total, loaded: true, source: source, cycle: cyc };
   return NPS_TCHARTS;
 }
 
@@ -1572,7 +1745,7 @@ async function npsFetchConversion(){
             const mcrRaw = r[7];
             const traffic = Number(r[8]) || 0;
             const mcr = (typeof mcrRaw === "number") ? (mcrRaw <= 1 ? mcrRaw*100 : mcrRaw) : null;
-            conv[sn] = { traffic: traffic, mobile: mobile, mcr: mcr, tcharts: 0, tpct: null };
+            conv[sn] = { traffic: traffic, mobile: mobile, mcr: mcr, tcharts: null, tpct: null };
           }
         }
       }
@@ -1589,18 +1762,32 @@ async function npsFetchConversion(){
       }
       NPS_CONV.byStore = conv;
     }
-    const tr = await fetch(NPS_CONFIG.TSHEET_URL + "?_=" + Date.now(), { cache: "no-store" });
-    if(tr.ok){
-      const data = await tr.json();
-      const subs = (data && data.submissions) || [];
+    // Same shared feed request as npsFetchTSheets (retried); snapshot fallback.
+    // Days are bucketed in LOCAL time: the feed's timestamps are UTC, so slicing
+    // the ISO string put every t-sheet filed after 7 PM Central on the wrong day.
+    let subs = null;
+    try { subs = await npsTSheetFeed(); }
+    catch(e){ console.warn("conversion: t-sheet feed unavailable, trying tsheet-counts.json:", e); }
+    const yd = new Date(); yd.setDate(yd.getDate() - 1);
+    const yISO = npsLocalYMD(yd);
+    let counts = null, useDate = null;
+    if(subs){
       const byDate = {};
-      for(const s of subs){ const ts = s.timestamp; if(!ts) continue; const day = String(ts).slice(0,10); (byDate[day] = byDate[day] || []).push(s); }
-      const d = new Date(); d.setDate(d.getDate()-1); const yISO = d.toISOString().slice(0,10);
-      let useDate = null;
+      for(const s of subs){ const t = Date.parse(s && s.timestamp); if(!isFinite(t)) continue; const day = npsLocalYMD(new Date(t)); (byDate[day] = byDate[day] || []).push(s); }
       if(byDate[yISO]) useDate = yISO;
       else { const days = Object.keys(byDate).sort(); for(let i=days.length-1;i>=0;i--){ if(byDate[days[i]].length>=30){ useDate=days[i]; break; } } if(!useDate && days.length) useDate = days[days.length-1]; }
-      const counts = {};
+      counts = {};
       (byDate[useDate] || []).forEach(s => { const sn = npsShortFromRaw(s.store); if(sn) counts[sn] = (counts[sn]||0)+1; });
+    } else {
+      // The snapshot only carries a single day's "today" column, so it can stand
+      // in only while it is still yesterday's file.
+      const snap = await npsFetchTSheetSnapshot().catch(e => { console.warn("conversion: tsheet-counts.json unavailable:", e); return null; });
+      if(snap && snap.day === yISO){
+        useDate = yISO; counts = {};
+        Object.keys(snap.stores).forEach(full => { const sn = npsShortFromRaw(full); if(sn) counts[sn] = (counts[sn]||0) + (Number((snap.stores[full]||{}).today) || 0); });
+      }
+    }
+    if(counts){
       NPS_CONV.date = useDate;
       Object.keys(NPS_CONV.byStore).forEach(sn => {
         const tc = counts[sn] || 0;
@@ -2059,7 +2246,7 @@ function npsCurrentStandingsHtml(row, tone){
     npsCurTile("Mobile", String(row.mobileMTD), "neutral", "20%")+
     npsCurTile("Tablet", String(row.tabletMTD), "neutral", "20%")+
     npsCurTile("Watches", String(row.watchMTD), "neutral", "20%")+
-    npsCurTile("T-Charts", String((NPS_TCHARTS.byStore||{})[row.name] || 0), "neutral", "20%")+
+    npsCurTile("T-Charts", NPS_TCHARTS.loaded ? String((NPS_TCHARTS.byStore||{})[row.name] || 0) : "&mdash;", "neutral", "20%")+
     '</div>';
   // toned metrics (3 across)
   const toned = '<div style="font-size:0;text-align:center;">'+
@@ -2100,7 +2287,7 @@ function npsConversionHtml(shortName){
       npsConvTile("Traffic", String(c.traffic||0), "neutral")+
       npsConvTile("XM Sold", String(c.mobile||0), "neutral")+
       npsConvTile("MCR", mcrTxt, mcrTone==="warn"?"neutral":mcrTone)+
-      npsConvTile("T-Charts", String(c.tcharts||0), "neutral")+
+      npsConvTile("T-Charts", c.tcharts == null ? "&mdash;" : String(c.tcharts), "neutral")+
       npsConvTile("T-Chart %", tpTxt, tpTone==="warn"?"neutral":tpTone)+
       '</div>';
   } else {
@@ -2219,11 +2406,15 @@ function buildNpsPayload(shortName, surveys, salesStores, dir){
   const storeReps = pool.filter(r => String(r.store).trim().toLowerCase() === shortName.toLowerCase())
     .sort((a,b) => a.rank - b.rank);
   if(storeReps.length){
-    const repTc = r => (NPS_TCHARTS.byRep || {})[String(r.name).trim().toLowerCase() + "||" + shortName.toLowerCase()] || 0;
+    const tcByStore = {};
+    pool.forEach(r => { const sk = String(r.store).trim().toLowerCase(); (tcByStore[sk] = tcByStore[sk] || []).push(r.name); });
+    Object.keys(tcByStore).forEach(sk => { tcByStore[sk] = npsTcByRoster(sk, tcByStore[sk]); });
+    const tcFor = r => (tcByStore[String(r.store).trim().toLowerCase()] || {})[String(r.name).trim().toLowerCase()] || 0;
+    const repTc = r => tcFor(r);
     const medGP   = npsMedian(pool.map(r => r.gp));
     const medPlus = npsMedian(pool.map(r => r.plusMix));
     const medGig  = npsMedian(pool.map(r => r.gigPct));
-    const medTc   = npsMedian(pool.map(r => (NPS_TCHARTS.byRep || {})[String(r.name).trim().toLowerCase() + "||" + String(r.store).trim().toLowerCase()] || 0));
+    const medTc   = npsMedian(pool.map(tcFor));
     const cv = (v, med) => v >= med ? "#047857" : "#b91c1c";
     const th = (t, ctr) => '<td style="background:#0f172a;color:#cbd5e1;font-size:9px;letter-spacing:0.5px;text-transform:uppercase;font-weight:700;padding:6px 4px;white-space:nowrap;' + (ctr ? "text-align:center;" : "") + '">' + t + '</td>';
     const td = (v, color, extra) => '<td style="font-size:12px;padding:6px 4px;border-bottom:1px solid #e2e8f0;color:' + (color || "#0f172a") + ';white-space:nowrap;' + (extra || "") + '">' + v + '</td>';
